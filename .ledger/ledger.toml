@@ -1,0 +1,24 @@
+schema_version = 3
+
+[project]
+uuid = "9fdb95c1-7577-4913-b174-f79a7d05e6f7"
+name = "soprosynth"
+
+[ledgers.taskledger.mounts.data]
+storage = "external"
+root = "../ledger"
+
+[ledgers.taskledger.mounts.runtime]
+storage = "user-data"
+
+[ledgers.taskledger.mounts.logs]
+storage = "user-data"
+
+[ledgers.taskledger.mounts.indexes]
+storage = "cache"
+
+[ledgers.releaseledger.mounts.data]
+storage = "project"
+
+[ledgers.releaseledger.mounts.indexes]
+storage = "cache"

@@ -1,0 +1,24 @@
+[codecrate]
+output = "context_soprosynth.md"
+keep_docstrings = true
+dedupe = true
+respect_gitignore = true
+exclude = ["*/.venv/*", "context_soprosynth.*"]
+include = [
+  "**/*.py",
+  "**/*.json",
+  "**/*.toml",
+  "**/*.rst",
+  "**/*.md",
+  "**/*.yaml",
+  "**/*.yml",
+  "**/py.typed",
+  "**/NOTICE",
+  "**/NOTICE.*",
+  "**/MANIFEST.in",
+  "LICENSE*",
+]
+split_max_chars = 2500000
+layout = "full"
+profile = "portable-agent"
+emit_standalone_unpacker = true
