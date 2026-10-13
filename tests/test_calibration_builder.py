@@ -118,7 +118,6 @@ def test_calibration_builder_import_error_is_actionable(monkeypatch):
         measure_audio_files(["not-read-without-audiosig.wav"])
 
 
-
 def test_calibration_cli_writes_reviewable_catalog_outside_production(tmp_path):
     pytest.importorskip("audiosig")
     rate = 48000
@@ -132,31 +131,34 @@ def test_calibration_cli_writes_reviewable_catalog_outside_production(tmp_path):
         output.writeframes((samples * 32767).astype("<i2").tobytes())
     destination = tmp_path / "reviewable-calibration.json"
 
-    assert main(
-        [
-            "--backend",
-            "native",
-            "--model-id",
-            "samuel-vitorino/sopro-v2-turbo",
-            "--revision",
-            "a" * 40,
-            "--audio",
-            str(source),
-            "--corpus",
-            "fixture corpus",
-            "--license",
-            "CC0-1.0",
-            "--provenance",
-            "fixture source and run id",
-            "--target-lufs",
-            "-16",
-            "--max-true-peak-dbtp",
-            "-1",
-            "--output",
-            str(destination),
-            "--i-have-rights",
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "--backend",
+                "native",
+                "--model-id",
+                "samuel-vitorino/sopro-v2-turbo",
+                "--revision",
+                "a" * 40,
+                "--audio",
+                str(source),
+                "--corpus",
+                "fixture corpus",
+                "--license",
+                "CC0-1.0",
+                "--provenance",
+                "fixture source and run id",
+                "--target-lufs",
+                "-16",
+                "--max-true-peak-dbtp",
+                "-1",
+                "--output",
+                str(destination),
+                "--i-have-rights",
+            ]
+        )
+        == 0
+    )
     raw = json.loads(destination.read_text(encoding="utf-8"))
     assert raw["schema"] == 2
     assert len(raw["records"]) == 1

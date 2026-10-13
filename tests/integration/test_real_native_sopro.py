@@ -122,7 +122,9 @@ def test_real_native_multilingual_reuse_stream_and_write(tmp_path):
         stream_voice = runtime.prepare_voice(reference, stream=True)
         chunks = list(
             runtime.stream(
-                SynthesisRequest(id="native-stream", text="Hello from native streaming.", language="en"),
+                SynthesisRequest(
+                    id="native-stream", text="Hello from native streaming.", language="en"
+                ),
                 voice=stream_voice,
                 config=config,
                 chunk_frames=64,

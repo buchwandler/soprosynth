@@ -19,13 +19,9 @@ def _make_wheel(
     metadata_version="0.1.0",
 ):
     path = directory / filename
-    metadata = (
-        f"Metadata-Version: 2.4\nName: {name}\nVersion: {metadata_version}\n"
-    ).encode()
+    metadata = (f"Metadata-Version: 2.4\nName: {name}\nVersion: {metadata_version}\n").encode()
     with zipfile.ZipFile(path, "w") as archive:
-        archive.writestr(
-            f"soprosynth-{dist_info_version}.dist-info/METADATA", metadata
-        )
+        archive.writestr(f"soprosynth-{dist_info_version}.dist-info/METADATA", metadata)
     return path
 
 
@@ -84,14 +80,12 @@ def test_release_artifact_verifier_rejects_metadata_or_sdist_root_mismatch(tmp_p
         verify_release_artifacts("v0.1.0", tmp_path)
 
 
-
 def test_release_artifact_verifier_rejects_embedded_metadata_version_mismatch(tmp_path):
     _make_wheel(tmp_path, metadata_version="0.1.1")
     _make_sdist(tmp_path)
 
     with pytest.raises(SystemExit, match="tag version"):
         verify_release_artifacts("v0.1.0", tmp_path)
-
 
 
 def test_release_artifact_verifier_rejects_mismatched_wheel_dist_info(tmp_path):

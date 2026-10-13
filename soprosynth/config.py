@@ -87,9 +87,8 @@ class VoiceLevelConfig:
             _number("gain_db", self.gain_db)
 
         if self.mode == "off" and self.gain_db is not None:
-            raise InvalidGenerationConfigError(
-                "gain_db requires voice-level mode 'calibrated'"
-            )
+            raise InvalidGenerationConfigError("gain_db requires voice-level mode 'calibrated'")
+
 
 @dataclass(frozen=True, slots=True)
 class VoiceLevelApplication:

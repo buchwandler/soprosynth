@@ -27,7 +27,9 @@ def _wheel_version(path: Path, *, expected: str | None = None) -> str:
             raise SystemExit(f"expected one wheel METADATA file in {path.name}")
         dist_info = PurePosixPath(metadata[0]).parts[0]
         if expected is not None and dist_info != f"soprosynth-{expected}.dist-info":
-            raise SystemExit(f"wheel dist-info filename does not match release version: {dist_info}")
+            raise SystemExit(
+                f"wheel dist-info filename does not match release version: {dist_info}"
+            )
         return _metadata_version(archive.read(metadata[0]).decode("utf-8"))
 
 

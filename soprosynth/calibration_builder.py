@@ -206,7 +206,9 @@ def measure_audio_files(
             or analysis.true_peak_dbtp is None
         ):
             raise ValueError(f"audiosig returned incomplete measurements for {path}")
-        loudnesses.append(_finite_number(analysis.integrated_lufs, f"integrated loudness for {path}"))
+        loudnesses.append(
+            _finite_number(analysis.integrated_lufs, f"integrated loudness for {path}")
+        )
         sample_peaks.append(_finite_number(analysis.sample_peak_dbfs, f"sample peak for {path}"))
         true_peaks.append(_finite_number(analysis.true_peak_dbtp, f"true peak for {path}"))
         sample_rates.append(sample_rate)
@@ -231,10 +233,14 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-id", required=True)
     parser.add_argument("--revision", required=True, help="exact immutable model revision")
     parser.add_argument("--profile", help="required for ONNX calibration identity")
-    parser.add_argument("--audio", action="append", required=True, help="licensed output WAV; repeat per sample")
+    parser.add_argument(
+        "--audio", action="append", required=True, help="licensed output WAV; repeat per sample"
+    )
     parser.add_argument("--corpus", required=True)
     parser.add_argument("--license", dest="license_id", required=True)
-    parser.add_argument("--provenance", required=True, help="corpus revision, source URL, or run record")
+    parser.add_argument(
+        "--provenance", required=True, help="corpus revision, source URL, or run record"
+    )
     parser.add_argument("--target-lufs", type=float, required=True)
     parser.add_argument("--max-true-peak-dbtp", type=float, required=True)
     parser.add_argument("--max-abs-gain-db", type=float, default=24.0)
@@ -265,7 +271,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     output = args.output.expanduser().resolve()
     if output == _PRODUCTION_CATALOG.resolve():
-        parser.error("write a reviewable calibration file; the packaged production catalog is not an output target")
+        parser.error(
+            "write a reviewable calibration file; the packaged production catalog is not an output target"
+        )
     if output.exists() and not args.force:
         parser.error(f"output already exists (pass --force to replace it): {output}")
 

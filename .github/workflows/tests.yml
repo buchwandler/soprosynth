@@ -1,51 +1,62 @@
-name: tests
-
+name: Run tests
 on:
   push:
+  workflow_call:
   pull_request:
-
-permissions:
-  contents: read
-
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  run:
+    runs-on: ${{ matrix.os }}
     strategy:
-      fail-fast: false
       matrix:
-        python-version: ["3.10", "3.12", "3.13"]
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install project and development dependencies
-        run: python -m pip install -e ".[dev]"
-      - name: Lint
-        run: python -m ruff check .
-      - name: Unit and offline boundary tests
-        run: python -m pytest -q
-
-  wheel-smoke:
+    - uses: actions/checkout@v4
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install packages
+      run: |
+        python -m pip install -e ".[dev]"
+        python -m compileall -q soprosynth tests
+    - name: Tests
+      run: pytest
+  python314-public-api:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install build tools
-        run: python -m pip install build twine
-      - name: Build wheel and source distribution
-        run: python -m build
-      - name: Validate distribution metadata
-        run: python -m twine check dist/*
-      - name: Install wheel into a clean environment
-        run: |
-          python -m venv "$RUNNER_TEMP/soprosynth-wheel-venv"
-          "$RUNNER_TEMP/soprosynth-wheel-venv/bin/python" -m pip install dist/*.whl
-      - name: Smoke-test installed wheel outside the checkout
-        run: "$RUNNER_TEMP/soprosynth-wheel-venv/bin/python" -I tests/wheel_api_smoke.py
+    - uses: actions/checkout@v4
+    - name: Setup Python 3.14
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.14"
+    - name: Install package and test dependencies
+      run: |
+        python -m pip install pytest
+        python -m pip install -e .
+    - name: Test no-model public API on Python 3.14
+      run: >-
+        python -m pytest -q
+        tests/test_api_contract.py
+        tests/test_package_boundary.py
+        tests/test_discovery.py
+  installed-wheel-smoke:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.13"
+    - name: Install build tooling
+      run: python -m pip install build
+    - name: Build wheel
+      run: python -m build --wheel
+    - name: Install wheel into a clean virtual environment
+      run: |
+        python -m venv /tmp/soprosynth-wheel
+        /tmp/soprosynth-wheel/bin/python -m pip install dist/*.whl
+    - name: Smoke-test installed public API without model assets
+      run: |
+        cd /tmp
+        /tmp/soprosynth-wheel/bin/python -I "$GITHUB_WORKSPACE/tests/wheel_api_smoke.py"

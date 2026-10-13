@@ -22,7 +22,6 @@ class ReferenceAudio:
     native_source: str | None = None
 
 
-
 def _resample_audio(
     audio: np.ndarray,
     source_rate: int,
@@ -40,6 +39,7 @@ def _resample_audio(
         ) from exc
     result = resample(audio, source_rate=source_rate, target_rate=target_rate)
     return np.ascontiguousarray(result, dtype=np.float32)
+
 
 def fingerprint_audio(audio: np.ndarray, sample_rate: int) -> str:
     digest = hashlib.sha256()
@@ -118,9 +118,7 @@ def load_reference_audio(
     if type(sample_rate) is not int or sample_rate <= 0:
         raise InvalidVoiceError("reference sample rate must be a positive integer")
     if expected_sample_rate is not None and sample_rate != expected_sample_rate:
-        audio = _resample_audio(
-            audio, sample_rate, expected_sample_rate, method=resampler
-        )
+        audio = _resample_audio(audio, sample_rate, expected_sample_rate, method=resampler)
         sample_rate = expected_sample_rate
         native_source = None
     return ReferenceAudio(

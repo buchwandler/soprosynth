@@ -279,6 +279,7 @@ class RuntimeDiagnostics:
                 raise InvalidRequestError("session diagnostics must not expose backend objects")
         object.__setattr__(self, "sessions", tuple(normalized_sessions))
 
+
 @dataclass(frozen=True, slots=True)
 class RuntimeCapabilities:
     """Capabilities of one selected runtime, not the producer-level union."""
@@ -314,7 +315,6 @@ class RuntimeCapabilities:
         ):
             if type(getattr(self, name)) is not bool:
                 raise InvalidRequestError(f"{name} must be a boolean")
-
 
 
 @dataclass(frozen=True, slots=True)

@@ -21,7 +21,11 @@ _CALIBRATION_RESOURCE = "data/voice_level_calibration.json"
 
 
 def _validate_catalog(raw: Any) -> Mapping[str, Mapping[str, Any]]:
-    if not isinstance(raw, Mapping) or type(raw.get("schema")) is not int or raw.get("schema") not in (1, 2):
+    if (
+        not isinstance(raw, Mapping)
+        or type(raw.get("schema")) is not int
+        or raw.get("schema") not in (1, 2)
+    ):
         raise UnsupportedBundleError("Voice-level calibration catalog must use schema 1 or 2")
     schema = raw["schema"]
     records = raw.get("records")
@@ -134,11 +138,17 @@ def _validate_catalog(raw: Any) -> Mapping[str, Mapping[str, Any]]:
                 )
             converted: list[float] = []
             for value in values:
-                if isinstance(value, bool) or not isinstance(value, Real) or not math.isfinite(float(value)):
+                if (
+                    isinstance(value, bool)
+                    or not isinstance(value, Real)
+                    or not math.isfinite(float(value))
+                ):
                     raise UnsupportedBundleError(f"Calibration record {key!r} has invalid {field}")
                 converted.append(float(value))
             if field == "durations_seconds" and any(value <= 0 for value in converted):
-                raise UnsupportedBundleError(f"Calibration record {key!r} has non-positive durations")
+                raise UnsupportedBundleError(
+                    f"Calibration record {key!r} has non-positive durations"
+                )
             numeric_arrays[field] = tuple(converted)
         numeric_fields = (
             "target_lufs",
@@ -154,7 +164,11 @@ def _validate_catalog(raw: Any) -> Mapping[str, Mapping[str, Any]]:
         numeric: dict[str, float] = {}
         for field in numeric_fields:
             value = record.get(field)
-            if isinstance(value, bool) or not isinstance(value, Real) or not math.isfinite(float(value)):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, Real)
+                or not math.isfinite(float(value))
+            ):
                 raise UnsupportedBundleError(f"Calibration record {key!r} has invalid {field}")
             numeric[field] = float(value)
         if numeric["max_abs_gain_db"] <= 0 or abs(float(gain)) > numeric["max_abs_gain_db"] + 1e-9:
@@ -167,14 +181,21 @@ def _validate_catalog(raw: Any) -> Mapping[str, Mapping[str, Any]]:
             ("max_measured_sample_peak_dbfs", max_sample_peak),
             ("max_measured_true_peak_dbtp", max_true_peak),
         )
-        if any(not math.isclose(numeric[field], value, rel_tol=0.0, abs_tol=1e-6) for field, value in summary):
-            raise UnsupportedBundleError(f"Calibration record {key!r} has inconsistent measurement summaries")
+        if any(
+            not math.isclose(numeric[field], value, rel_tol=0.0, abs_tol=1e-6)
+            for field, value in summary
+        ):
+            raise UnsupportedBundleError(
+                f"Calibration record {key!r} has inconsistent measurement summaries"
+            )
         policy_gain = min(
             numeric["target_lufs"] - median_lufs,
             numeric["max_true_peak_dbtp"] - max_true_peak,
         )
         if not math.isclose(float(gain), policy_gain, rel_tol=0.0, abs_tol=1e-6):
-            raise UnsupportedBundleError(f"Calibration record {key!r} does not follow its target/peak policy")
+            raise UnsupportedBundleError(
+                f"Calibration record {key!r} does not follow its target/peak policy"
+            )
         predictions = (
             ("predicted_median_lufs", median_lufs + float(gain)),
             ("predicted_max_sample_peak_dbfs", max_sample_peak + float(gain)),
@@ -184,9 +205,13 @@ def _validate_catalog(raw: Any) -> Mapping[str, Mapping[str, Any]]:
             not math.isclose(numeric[field], value, rel_tol=0.0, abs_tol=1e-6)
             for field, value in predictions
         ):
-            raise UnsupportedBundleError(f"Calibration record {key!r} has inconsistent predicted measurements")
+            raise UnsupportedBundleError(
+                f"Calibration record {key!r} has inconsistent predicted measurements"
+            )
         if numeric["predicted_max_true_peak_dbtp"] > numeric["max_true_peak_dbtp"] + 1e-6:
-            raise UnsupportedBundleError(f"Calibration record {key!r} exceeds its true-peak ceiling")
+            raise UnsupportedBundleError(
+                f"Calibration record {key!r} exceeds its true-peak ceiling"
+            )
         frozen = dict(record)
         frozen.update(numeric)
         frozen["gain_db"] = float(gain)
@@ -195,6 +220,7 @@ def _validate_catalog(raw: Any) -> Mapping[str, Mapping[str, Any]]:
         frozen["sample_sha256s"] = tuple(sample_hashes)
         validated[key] = MappingProxyType(frozen)
     return MappingProxyType(validated)
+
 
 def load_calibration_catalog(
     source: str | Path | Mapping[str, Any] | None = None,
@@ -267,9 +293,7 @@ def apply_voice_level_calibration(
     if not isinstance(config, VoiceLevelConfig):
         raise InvalidGenerationConfigError("config must be a VoiceLevelConfig")
     if config.mode == "off" and config.gain_db is not None:
-        raise InvalidGenerationConfigError(
-            "gain_db requires voice-level mode 'calibrated'"
-        )
+        raise InvalidGenerationConfigError("gain_db requires voice-level mode 'calibrated'")
     source = "off"
     gain_db = 0.0
     if config.gain_db is not None:

@@ -161,9 +161,7 @@ def test_voice_level_rejects_off_override_and_unrepresentable_gain():
     invalid_config = VoiceLevelConfig(mode="calibrated", gain_db=6.0)
     object.__setattr__(invalid_config, "mode", "off")
     with pytest.raises(InvalidGenerationConfigError, match="gain_db requires"):
-        apply_voice_level_calibration(
-            audio, invalid_config, identity=None, catalog={}
-        )
+        apply_voice_level_calibration(audio, invalid_config, identity=None, catalog={})
 
 
 class _NativeEngine:

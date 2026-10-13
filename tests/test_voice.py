@@ -73,7 +73,6 @@ def test_linear_resampling_of_tuple_audio():
     assert loaded.audio.tolist() == pytest.approx([0.0, 0.5, 1.0, 1.0])
 
 
-
 def test_audiosig_resampling_is_opt_in_anti_aliased_and_rate_correct():
     pytest.importorskip("audiosig")
     source_rate = 48000

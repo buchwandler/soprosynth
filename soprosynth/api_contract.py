@@ -11,6 +11,7 @@ REQUEST_API_VERSION = 1
 @dataclass(frozen=True, slots=True)
 class RequestApiContract:
     """Stable producer-level union; not a promise for every selected backend."""
+
     version: int
     request_type: type[Any]
     result_type: type[Any]
