@@ -1,23 +1,22 @@
 [build-system]
-requires = ["setuptools>=68", "setuptools_scm[toml]>=8", "wheel"]
+requires = ["setuptools>=77", "setuptools_scm[toml]>=8", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "soprosynth"
 dynamic = ["version"]
-description = "Sopro TTS API with OnnxVoice graph embedding"
+description = "Backend-neutral Python API for the upstream Sopro text-to-speech system"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "Apache-2.0"}
-dependencies = ["numpy>=1.23", "onnxvoice>=0.2.4,<0.4"]
+license = "Apache-2.0"
+dependencies = ["numpy>=1.23"]
 keywords = ["sopro", "tts", "onnx", "onnxvoice"]
 
 [project.optional-dependencies]
-# Native backend provides a working TTS path until the multi-graph ONNX loop is implemented.
 native = ["sopro>=2.2.0,<3"]
-cpu = ["onnxruntime>=1.18"]
-gpu = ["onnxruntime-gpu>=1.18"]
-dev = ["pytest>=8", "build>=1.2", "ruff>=0.8", "setuptools_scm>=8"]
+cpu = ["onnxvoice[cpu]>=0.2.6,<0.3"]
+gpu = ["onnxvoice[gpu]>=0.2.6,<0.3"]
+dev = ["pytest>=8", "build>=1.2", "ruff>=0.8", "setuptools_scm>=8", "twine>=5"]
 
 [project.scripts]
 soprosynth = "soprosynth.__main__:main"
@@ -26,7 +25,7 @@ soprosynth = "soprosynth.__main__:main"
 where = ["."]
 include = ["soprosynth*"]
 [tool.setuptools.package-data]
-soprosynth = ["py.typed"]
+soprosynth = ["py.typed", "data/*.json"]
 [tool.setuptools_scm]
 write_to = "soprosynth/_version.py"
 fallback_version = "0.0.0"

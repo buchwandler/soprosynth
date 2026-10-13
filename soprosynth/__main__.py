@@ -1,36 +1,171 @@
+"""SoproSynth command-line interface."""
+
 from __future__ import annotations
+
 import argparse
-from . import __version__
-from .api import SoproRuntime, SynthesisRequest
+import json
+from collections.abc import Mapping, Sequence
+from dataclasses import fields, is_dataclass
+from pathlib import Path
+from typing import Any
+
+from . import __version__, discover_bundles, request_api_contract, runtime_identity
+from .api import SoproRuntime
+from .config import GenerationConfig, VoiceLevelConfig
 
 
-def main() -> None:
-    p = argparse.ArgumentParser(
-        prog="soprosynth", description="SoproSynth API and ONNX graph inspector"
+def _json_value(value: Any) -> Any:
+    if is_dataclass(value) and not isinstance(value, type):
+        return {field.name: _json_value(getattr(value, field.name)) for field in fields(value)}
+    if isinstance(value, Mapping):
+        return {str(key): _json_value(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_json_value(item) for item in value]
+    if isinstance(value, Path):
+        return str(value)
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
+def _print_json(value: Any) -> None:
+    print(json.dumps(_json_value(value), indent=2, sort_keys=True))
+
+
+def _contract_summary() -> dict[str, Any]:
+    contract = request_api_contract()
+    return {
+        "version": contract.version,
+        "request_type": contract.request_type.__name__,
+        "result_type": contract.result_type.__name__,
+        "synthesis_method": contract.synthesis_method,
+        "measurement_method": contract.measurement_method,
+        "supports_reference_voice": contract.supports_reference_voice,
+        "supports_voice_level": contract.supports_voice_level,
+        "supports_request_measurement": contract.supports_request_measurement,
+        "supports_streaming": contract.supports_streaming,
+        "supports_word_timings": contract.supports_word_timings,
+    }
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="soprosynth",
+        description="SoproSynth native-first speech synthesis and runtime information",
     )
-    p.add_argument("--version", action="version", version=__version__)
-    sub = p.add_subparsers(dest="command", required=True)
-    ins = sub.add_parser("inspect", help="inspect local exported graph names (loads no sessions)")
-    ins.add_argument("directory")
-    ins.add_argument("--profile", default="wasm-uint8")
-    sp = sub.add_parser("speak", help="synthesize using upstream native Sopro backend")
-    sp.add_argument("text")
-    sp.add_argument("--ref", required=True)
-    sp.add_argument("--out", default="out.wav")
-    sp.add_argument("--language", default=None, choices=["en", "pt", "fr", "de", "auto"])
-    args = p.parse_args()
+    parser.add_argument("--version", action="version", version=__version__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    speak = subparsers.add_parser("speak", help="synthesize speech")
+    speak.add_argument("text", help="text for one atomic synthesis request")
+    speak.add_argument("--ref", required=True, help="reference voice WAV path")
+    speak.add_argument("--out", default="out.wav", help="output mono PCM16 WAV path")
+    speak.add_argument("--language", choices=("en", "pt", "fr", "de", "auto"))
+    speak.add_argument("--backend", choices=("native", "onnx"), default="native")
+    speak.add_argument("--model", default="samuel-vitorino/sopro-v2-turbo")
+    speak.add_argument(
+        "--device",
+        default="cpu",
+        help="native device or ONNX provider (Sopro ONNX currently supports CPU only)",
+    )
+    speak.add_argument("--temperature", type=float)
+    speak.add_argument("--top-p", type=float)
+    speak.add_argument("--top-k", type=int)
+    speak.add_argument("--max-seconds", type=float)
+    speak.add_argument("--min-seconds", type=float)
+    speak.add_argument("--voice-level", choices=("off", "calibrated"), default="off")
+    speak.add_argument("--gain-db", type=float, help="explicit static gain override")
+
+    subparsers.add_parser(
+        "info", help="show API contract and runtime provenance without loading a model"
+    )
+
+    discover = subparsers.add_parser("discover", help="list native or ONNX Sopro bundle metadata")
+    discover.add_argument("--backend", choices=("native", "onnx", "all"), default="native")
+    discover.add_argument(
+        "--offline", action="store_true", help="use catalog data available offline"
+    )
+    discover.add_argument(
+        "--refresh", action="store_true", help="refresh ONNXVoice catalog metadata"
+    )
+    discover.add_argument("--cache-dir", type=Path)
+
+    inspect = subparsers.add_parser(
+        "inspect",
+        help="experimental developer-only validation of a local ONNX export; does not synthesize",
+    )
+    inspect.add_argument("directory", type=Path)
+    inspect.add_argument("--profile", default="wasm-uint8")
+    return parser
+
+
+def _speak(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    if args.gain_db is not None and args.voice_level != "calibrated":
+        parser.error("--gain-db requires --voice-level calibrated")
+    config = GenerationConfig(
+        temperature=args.temperature,
+        top_p=args.top_p,
+        top_k=args.top_k,
+        max_seconds=args.max_seconds,
+        min_seconds=args.min_seconds,
+    )
+    voice_level = VoiceLevelConfig(mode=args.voice_level, gain_db=args.gain_db)
+    with SoproRuntime.from_pretrained(
+        model=args.model,
+        backend=args.backend,
+        device=args.device,
+    ) as runtime:
+        result = runtime.synthesize_text(
+            args.text,
+            id="cli-speak",
+            voice=args.ref,
+            language=args.language,
+            config=config,
+            voice_level=voice_level,
+        )
+        output = result.save_wav(args.out)
+        print(output)
+        application = result.metadata.get("voice_level_application")
+        if application is not None:
+            _print_json({"voice_level_application": application})
+    return 0
+
+
+def _discover(args: argparse.Namespace) -> int:
+    bundles = discover_bundles(
+        backend=args.backend,
+        offline=args.offline,
+        refresh=args.refresh,
+        cache_dir=args.cache_dir,
+    )
+    _print_json(bundles)
+    return 0
+
+
+def _inspect(args: argparse.Namespace) -> int:
+    print("Experimental developer inspection only; this command does not run synthesis.")
+    with SoproRuntime.from_onnx_local(args.directory, profile=args.profile) as runtime:
+        _print_json(runtime.diagnostics)
+    return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    if args.command == "speak":
+        return _speak(args, parser)
+    if args.command == "info":
+        _print_json(
+            {"version": __version__, "api": _contract_summary(), "runtime": runtime_identity()}
+        )
+        return 0
+    if args.command == "discover":
+        return _discover(args)
     if args.command == "inspect":
-        with SoproRuntime.from_onnx_local(args.directory, profile=args.profile) as runtime:
-            print("ONNX graphs:")
-            for graph in runtime.onnx_adapter.graphs:
-                print("  " + graph)
-    else:
-        with SoproRuntime.from_pretrained() as runtime:
-            out = runtime.synthesize(
-                SynthesisRequest(args.text, language=args.language), voice=args.ref
-            )
-            print(out.save_wav(args.out))
+        return _inspect(args)
+    parser.error(f"unknown command: {args.command}")
+    return 2
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -1,0 +1,70 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  verify-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install project and release tools
+        run: python -m pip install -e ".[dev]"
+      - name: Lint
+        run: python -m ruff check .
+      - name: Offline unit and boundary tests
+        run: python -m pytest -q
+      - name: Build wheel and source distribution
+        run: python -m build
+      - name: Verify tag and artifact versions
+        run: python scripts/check_release_artifacts.py --tag "$GITHUB_REF_NAME"
+      - name: Validate distributions
+        run: python -m twine check dist/*
+      - name: Install wheel into a clean environment
+        run: |
+          python -m venv "$RUNNER_TEMP/soprosynth-wheel-venv"
+          "$RUNNER_TEMP/soprosynth-wheel-venv/bin/python" -m pip install dist/*.whl
+      - name: Smoke-test installed wheel outside the checkout
+        run: "$RUNNER_TEMP/soprosynth-wheel-venv/bin/python" -I tests/wheel_api_smoke.py
+      - name: Preserve verified distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: verify-build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/soprosynth/
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check PyPI project name immediately before publishing
+        run: python scripts/check_pypi_name.py --package soprosynth
+      - name: Publish with PyPI Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/

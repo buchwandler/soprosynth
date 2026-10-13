@@ -1,4 +1,4 @@
-"""Small, explicit Sopro API. Importing this module never downloads weights."""
+"""Dependency-light public API for the Sopro speech-synthesis runtime."""
 
 try:
     from ._version import version as __version__
@@ -10,21 +10,94 @@ except ImportError:
     except PackageNotFoundError:
         __version__ = "0.0.0"
 
-from .api import AudioResult, GenerationConfig, PreparedVoice, SoproRuntime, SynthesisRequest
-from .errors import SoproError, BackendUnavailableError, OnnxPipelineNotImplementedError
-from .onnx import SoproOnnxAdapter, open_onnx_bundle, register_sopro_adapter
+from .api import SoproRuntime
+from .api_contract import REQUEST_API_VERSION, RequestApiContract, request_api_contract
+from .config import (
+    GenerationConfig,
+    VoiceLevelApplication,
+    VoiceLevelConfig,
+    VoiceLevelMode,
+    VoiceLevelSource,
+)
+from .discovery import discover_bundles, runtime_identity
+from .errors import (
+    AssetAccessError,
+    AssetCacheError,
+    AssetDownloadError,
+    AssetError,
+    BackendUnavailableError,
+    BundleNotFoundError,
+    CatalogUnavailableError,
+    EmptyTextError,
+    InvalidGenerationConfigError,
+    InvalidLanguageError,
+    InvalidRequestError,
+    InvalidVoiceError,
+    ModelInferenceError,
+    OfflineAssetError,
+    OnnxPipelineNotImplementedError,
+    OptionalDependencyError,
+    RuntimeCapabilityError,
+    RuntimeClosedError,
+    SessionCreationError,
+    SoproError,
+    SoproSynthError,
+    UnsupportedBundleError,
+    UnsupportedFeatureError,
+)
+from .types import (
+    DiscoveredBundle,
+    PreparedVoice,
+    RequestMeasure,
+    RuntimeDiagnostics,
+    StreamingChunk,
+    SynthesisRequest,
+    SynthesisResult,
+    WordTiming,
+)
 
 __all__ = [
-    "__version__",
-    "AudioResult",
-    "GenerationConfig",
-    "PreparedVoice",
-    "SoproRuntime",
-    "SynthesisRequest",
-    "SoproError",
+    "REQUEST_API_VERSION",
+    "AssetAccessError",
+    "AssetCacheError",
+    "AssetDownloadError",
+    "AssetError",
     "BackendUnavailableError",
+    "BundleNotFoundError",
+    "CatalogUnavailableError",
+    "DiscoveredBundle",
+    "EmptyTextError",
+    "GenerationConfig",
+    "InvalidGenerationConfigError",
+    "InvalidLanguageError",
+    "InvalidRequestError",
+    "InvalidVoiceError",
+    "ModelInferenceError",
+    "OfflineAssetError",
     "OnnxPipelineNotImplementedError",
-    "SoproOnnxAdapter",
-    "open_onnx_bundle",
-    "register_sopro_adapter",
+    "OptionalDependencyError",
+    "PreparedVoice",
+    "RequestApiContract",
+    "RequestMeasure",
+    "RuntimeCapabilityError",
+    "RuntimeClosedError",
+    "RuntimeDiagnostics",
+    "SessionCreationError",
+    "SoproError",
+    "SoproRuntime",
+    "SoproSynthError",
+    "StreamingChunk",
+    "SynthesisRequest",
+    "SynthesisResult",
+    "UnsupportedBundleError",
+    "UnsupportedFeatureError",
+    "VoiceLevelApplication",
+    "VoiceLevelConfig",
+    "VoiceLevelMode",
+    "VoiceLevelSource",
+    "WordTiming",
+    "__version__",
+    "discover_bundles",
+    "request_api_contract",
+    "runtime_identity",
 ]

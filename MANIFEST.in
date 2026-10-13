@@ -1,0 +1,8 @@
+include LICENSE
+include README.md
+recursive-include examples *.py
+recursive-include scripts *.py
+recursive-include tests *.py
+recursive-include soprosynth/data *.json
+prune .github
+prune .ledger
