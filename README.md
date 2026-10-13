@@ -76,7 +76,7 @@ with SoproRuntime.from_pretrained(backend="native") as runtime:
     )
 ```
 
-Supported language IDs are `en`, `pt`, `fr`, `de`, and `auto` (or `None` where allowed). SoproSynth does not run language detection. It does not implement text segmentation, pronunciation overrides, linguistic tokens, word timings, or final mastering. Request API capabilities are available via `request_api_contract()` without opening a model.
+Supported language IDs are `en`, `pt`, `fr`, `de`, and `auto` (or `None` where allowed). SoproSynth does not run language detection. It does not implement text segmentation, pronunciation overrides, linguistic tokens, word timings, or final mastering. `request_api_contract()` is the API-v1 producer-level union: a true feature may belong to another backend. Inspect `runtime.capabilities` for the selected backend without changing API v1 or loading another runtime.
 
 `GenerationConfig` provides validated controls such as `temperature`, `top_p`, `top_k`, `steps`, `max_seconds`, and `min_seconds`. A backend must reject unsupported controls rather than silently ignore them.
 
@@ -90,17 +90,22 @@ Pass an explicit language ID for every request when the language is known. See [
 
 ## Streaming
 
-Native streaming is available through `runtime.stream(request, voice=prepared_voice)`. It yields `StreamingChunk` values. ONNX streaming is not supported and is never implied by the common contract. See [`examples/streaming.py`](examples/streaming.py).
+Native streaming is available through `runtime.stream(request, voice=prepared_voice)`. It yields `StreamingChunk` values; check `runtime.capabilities.supports_streaming` before using it. Exact request measurement is currently available only on ONNXVoice runtimes (`supports_request_measurement`). The v1 contract reports the producer-level union, not per-backend support. ONNX streaming is unsupported. See [`examples/streaming.py`](examples/streaming.py).
 
 ## Voice-level calibration
 
-Voice-level processing is opt-in through `VoiceLevelConfig`. The packaged schema-1 calibration catalog is empty because no measured corpus was supplied. In calibrated mode, a record is used only for an exact backend, canonical model, runtime revision, and (for ONNX) profile identity. If there is no exact record, the result reports `source="missing_calibration"` and the audio is unchanged. No gain or target loudness has been invented.
+Voice-level processing is opt-in through `VoiceLevelConfig`. The packaged schema-2 calibration catalog is empty because no measured corpus was supplied. In calibrated mode, a record is used only for an exact backend, canonical model, runtime revision, and (for ONNX) profile identity. If there is no exact record, the result reports `source="missing_calibration"` and the audio is unchanged. No gain or target loudness has been invented; legacy schema-1 records remain readable.
 
 A caller may provide an explicit static `gain_db` override. This applies linear gain without measuring loudness or clipping the in-memory result; PCM WAV conversion may clip. Example: [`examples/calibrated_voice_level.py`](examples/calibrated_voice_level.py).
 
+
+For an offline measured catalog, install `soprosynth[audio]` and run `soprosynth-build-calibration` on licensed PCM WAV outputs. The command requires corpus/license/provenance metadata, an exact model revision, explicit target LUFS and true-peak ceiling, and `--i-have-rights`; it records the `audiosig` version, per-sample rates/durations/loudness/sample/true peaks, and source-file SHA-256 values. It targets the median per-file integrated LUFS while limiting the worst 4x true peak, and rejects gains outside ±24 dB by default. The command writes a reviewable external catalog and refuses to write into the packaged catalog. Keep that production catalog empty until real licensed measurements have been reviewed; never commit reference audio or generated speech.
+
+Reference-rate conversion remains dependency-free linear interpolation by default. To opt into anti-aliased resampling, install `soprosynth[audio]` and call `runtime.prepare_voice(reference, resampler="audiosig")`; ONNX Runtime and audiosig remain optional.
+
 ## Discovery and runtime identity
 
-`request_api_contract()`, native `discover_bundles()`, and `runtime_identity()` do not load a speech model or import the optional runtimes. ONNX discovery may read or refresh ONNXVoice catalog metadata, but it does not open a model. Runtime identity reports exact package/model metadata where available; missing revisions stay unknown rather than being guessed. See [`examples/discovery.py`](examples/discovery.py).
+`request_api_contract()`, native `discover_bundles()`, and `runtime_identity()` do not load a speech model or import optional runtimes. ONNX discovery may read or refresh ONNXVoice catalog metadata, but does not open a model. Runtime identity reports exact package/model metadata where available; missing revisions stay unknown rather than being guessed. See [`examples/discovery.py`](examples/discovery.py), which works with the NumPy-only base install.
 
 ## Backend architecture
 
@@ -108,11 +113,11 @@ SoproSynth owns the public request/result types, input validation, reference-voi
 
 ## ONNX status
 
-The optional integration targets `onnxvoice>=0.2.6,<0.3` and uses ONNXVoice's built-in Sopro API. CPU and GPU extras forward ONNXVoice's corresponding extras. ONNX is opt-in; install `soprosynth[cpu]` only with a compatible ONNXVoice release. This implementation was exercised against a modified sibling checkout that reported version 0.2.5; it has **not** been verified against a published ONNXVoice 0.2.6 wheel. Do not treat that local smoke check as released-wheel validation.
+The optional integration targets `onnxvoice>=0.2.6,<0.3`, which includes published 0.2.6 and its built-in Sopro API. CPU and GPU extras forward ONNXVoice's corresponding runtime dependencies. The opt-in real gate rejects editable ONNXVoice checkouts and covers managed install, offline reopen, reference preparation/inference, WAV output, and diagnostics. The wheel-based smoke passed in this implementation run; details and limits are recorded below.
 
-The current Sopro parity boundary is limited to the explicitly supported `wasm-uint8` profile with CPU execution. Other profiles/providers fail explicitly; installing a GPU extra does not change this support statement. ONNX streaming is unsupported. Real-bundle inference and quality parity remain unverified here. For local export metadata inspection only, use [`examples/onnx_inspect.py`](examples/onnx_inspect.py) or `soprosynth inspect`; this experimental developer command does not synthesize speech.
+The tested Sopro parity boundary remains `wasm-uint8` with CPU execution only; other profiles/providers fail explicitly, and installing a GPU extra does not change that boundary. ONNX streaming is unsupported. The real smoke passed with the published ONNXVoice 0.2.6 wheel, Python 3.14, ONNX Runtime 1.29.0, `CPUExecutionProvider`, and manifest revision `7a645ef2aaecfea9` (catalog source commit `9fe97bddf52ed785af3634db86a032bb7e07bf18`). Its reference was `kyutai/tts-voices` `voice-donations/f9cf.wav`, pinned at `323332d33f997de8394f24a193e1a76df720e01a`, marked CC0-1.0, SHA-256 `9c35277376fd34d8217672cedd8fa098e2321f243007d190838ac6a93cf4dbaf`. ONNX Runtime warned that Android is unsupported; this is a smoke result for that environment, not a platform-support, quality, or broad parity claim. For experimental local inspection, [`examples/onnx_inspect.py`](examples/onnx_inspect.py) and `soprosynth inspect` open an ONNXVoice runtime/session and print diagnostics but do not synthesize; they require optional ONNX dependencies and a compatible local export.
 
-Managed ONNX acquisition uses ONNXVoice catalogs and its asset manager. To open an already installed ONNXVoice model without acquiring assets, use `SoproRuntime.load(...)`. To inspect a local compatible export, use `SoproRuntime.from_onnx_local(...)`. The optional ONNX path is not the default and should not be represented as validated against a published 0.2.6 distribution until that check has actually passed.
+Managed ONNX acquisition uses ONNXVoice catalogs and its asset manager. To open an already installed model without acquiring assets, use `SoproRuntime.load(...)`; for a local compatible export, use `SoproRuntime.from_onnx_local(...)`. Neither API implies support for untested profiles/providers or quality parity.
 
 ## Offline behavior
 
@@ -144,11 +149,17 @@ SynthesisRequest(
 
 `SynthesisRequest("Hello", language="en")` is not the supported request form. No misleading `AudioResult` alias is exported; use `SynthesisResult`. The former producer-owned ONNX adapter/graph execution surface is not part of the normal public API. Use `SoproRuntime` and ONNXVoice's supported built-in Sopro integration instead.
 
+## PyPI release ownership
+
+The publish job uses PyPI Trusted Publishing (OIDC), not a stored API token. Configure the PyPI Trusted Publisher with GitHub owner `buchwandler`, repository `soprosynth`, workflow `publish.yml`, and GitHub environment `pypi`; the publish job grants `id-token: write`. For the first publication, leave the repository variable `PYPI_PROJECT_CLAIMED` unset/false so the workflow requires the name to be unclaimed. After a successful first publish and verification that the Trusted Publisher is correctly bound, set `PYPI_PROJECT_CLAIMED=true`. Later tagged releases skip the unclaimed-name check and rely on PyPI's Trusted Publishing authorization. Do not set the variable early to bypass the first-publication guard.
+
 ## Versioning, provenance, and license
 
 Package versions are derived from Git tags by `setuptools_scm`; the `v0.1.0` release tag has not been created by this implementation task. SoproSynth source code is Apache-2.0. SoproSynth does not redistribute pretrained weights. Native weights, ONNX exports, and reference recordings are separate assets: obtain them from their respective sources and follow their licenses and usage terms. SoproSynth does not claim rights to user-provided reference audio.
 
 ## Examples
+
+For prerequisites and capability limits, see [`examples/README.md`](examples/README.md).
 
 - [`examples/quickstart.py`](examples/quickstart.py)
 - [`examples/strict_request.py`](examples/strict_request.py)
@@ -157,4 +168,4 @@ Package versions are derived from Git tags by `setuptools_scm`; the `v0.1.0` rel
 - [`examples/streaming.py`](examples/streaming.py)
 - [`examples/calibrated_voice_level.py`](examples/calibrated_voice_level.py)
 - [`examples/discovery.py`](examples/discovery.py)
-- [`examples/onnx_inspect.py`](examples/onnx_inspect.py) (experimental, inspection only)
+- [`examples/onnx_inspect.py`](examples/onnx_inspect.py) (experimental; opens a local session, no synthesis)

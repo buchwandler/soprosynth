@@ -1,4 +1,8 @@
-"""Prepare one reference voice and reuse it on the same runtime."""
+"""Prepare one voice and reuse it on the same native runtime only.
+
+Requires ``soprosynth[native]``, model weights, and an authorized reference.wav;
+prepared voice state is not portable across runtimes or processes.
+"""
 
 from soprosynth import SoproRuntime, SynthesisRequest
 

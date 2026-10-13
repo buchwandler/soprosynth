@@ -143,6 +143,29 @@ def test_calibration_catalog_rejects_nonfinite_gain_and_bad_identity():
         )
 
 
+def test_voice_level_rejects_off_override_and_unrepresentable_gain():
+    from soprosynth.errors import InvalidGenerationConfigError
+
+    with pytest.raises(InvalidGenerationConfigError, match="gain_db requires"):
+        VoiceLevelConfig(mode="off", gain_db=6.0)
+
+    audio = np.array([0.25], dtype=np.float32)
+    with pytest.raises(InvalidGenerationConfigError, match="unrepresentable scale"):
+        apply_voice_level_calibration(
+            audio,
+            VoiceLevelConfig(mode="calibrated", gain_db=1000.0),
+            identity=None,
+            catalog={},
+        )
+
+    invalid_config = VoiceLevelConfig(mode="calibrated", gain_db=6.0)
+    object.__setattr__(invalid_config, "mode", "off")
+    with pytest.raises(InvalidGenerationConfigError, match="gain_db requires"):
+        apply_voice_level_calibration(
+            audio, invalid_config, identity=None, catalog={}
+        )
+
+
 class _NativeEngine:
     sample_rate = 24000
 

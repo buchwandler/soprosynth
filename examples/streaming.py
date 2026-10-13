@@ -1,4 +1,8 @@
-"""Native streaming only; ONNX streaming is not implied or supported."""
+"""Demonstrate native-only streaming; ONNX streaming is unsupported.
+
+Requires ``soprosynth[native]``, model weights, and an authorized reference.wav.
+This demo collects all chunks in memory; it makes no real-time guarantee.
+"""
 
 import numpy as np
 

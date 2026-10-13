@@ -1,4 +1,8 @@
-"""Demonstrate calibrated mode without inventing a catalog calibration value."""
+"""Show calibrated-mode fallback without inventing a calibration value.
+
+Requires ``soprosynth[native]``, model weights, and an authorized reference.wav.
+The packaged catalog is empty, so this default request leaves samples unchanged.
+"""
 
 from soprosynth import SoproRuntime, SynthesisRequest, VoiceLevelConfig
 

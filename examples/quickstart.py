@@ -1,4 +1,8 @@
-"""Smallest native SoproSynth example (requires weights and reference.wav)."""
+"""Native one-request quickstart.
+
+Requires ``soprosynth[native]``, model weights, and an authorized reference.wav;
+opening an uncached model may download weights. No language detection is run.
+"""
 
 from soprosynth import SoproRuntime
 

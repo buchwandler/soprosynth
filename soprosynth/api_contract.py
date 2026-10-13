@@ -10,6 +10,7 @@ REQUEST_API_VERSION = 1
 
 @dataclass(frozen=True, slots=True)
 class RequestApiContract:
+    """Stable producer-level union; not a promise for every selected backend."""
     version: int
     request_type: type[Any]
     result_type: type[Any]
@@ -32,7 +33,11 @@ class RequestApiContract:
 
 
 def request_api_contract() -> RequestApiContract:
-    """Return the stable v1 contract without importing an optional backend."""
+    """Return the stable v1 producer-union contract without optional imports.
+
+    A true capability means that at least one supported backend provides it;
+    inspect ``runtime.capabilities`` for the selected runtime.
+    """
     from .api import SoproRuntime
     from .types import SynthesisRequest, SynthesisResult
 

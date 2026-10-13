@@ -92,7 +92,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     inspect = subparsers.add_parser(
         "inspect",
-        help="experimental developer-only validation of a local ONNX export; does not synthesize",
+        help="experimental: open a local ONNXVoice session and print diagnostics; does not synthesize",
     )
     inspect.add_argument("directory", type=Path)
     inspect.add_argument("--profile", default="wasm-uint8")

@@ -1,4 +1,8 @@
-"""Use explicit language IDs; this example does not run language detection."""
+"""Use explicit IDs for four native requests; no language detection is run.
+
+Requires ``soprosynth[native]``, model weights, and an authorized reference.wav.
+Explicit IDs do not promise language quality or automatic language support.
+"""
 
 from soprosynth import SoproRuntime, SynthesisRequest
 

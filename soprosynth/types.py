@@ -279,6 +279,43 @@ class RuntimeDiagnostics:
                 raise InvalidRequestError("session diagnostics must not expose backend objects")
         object.__setattr__(self, "sessions", tuple(normalized_sessions))
 
+@dataclass(frozen=True, slots=True)
+class RuntimeCapabilities:
+    """Capabilities of one selected runtime, not the producer-level union."""
+
+    backend: str
+    supports_linguistic_tokens: bool = False
+    supports_pronunciation_overrides: bool = False
+    supports_whole_request_phonemes: bool = False
+    supports_named_voices: bool = False
+    supports_reference_voice: bool = True
+    supports_managed_reference_voice: bool = False
+    supports_prepared_voice_reuse: bool = True
+    supports_word_timings: bool = False
+    supports_voice_level: bool = True
+    supports_request_measurement: bool = False
+    supports_streaming: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.backend, str) or not self.backend:
+            raise InvalidRequestError("capability backend must be a non-empty string")
+        for name in (
+            "supports_linguistic_tokens",
+            "supports_pronunciation_overrides",
+            "supports_whole_request_phonemes",
+            "supports_named_voices",
+            "supports_reference_voice",
+            "supports_managed_reference_voice",
+            "supports_prepared_voice_reuse",
+            "supports_word_timings",
+            "supports_voice_level",
+            "supports_request_measurement",
+            "supports_streaming",
+        ):
+            if type(getattr(self, name)) is not bool:
+                raise InvalidRequestError(f"{name} must be a boolean")
+
+
 
 @dataclass(frozen=True, slots=True)
 class DiscoveredBundle:

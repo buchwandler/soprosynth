@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import statistics
 from collections.abc import Mapping
 from importlib import resources
 from numbers import Real
@@ -20,16 +21,45 @@ _CALIBRATION_RESOURCE = "data/voice_level_calibration.json"
 
 
 def _validate_catalog(raw: Any) -> Mapping[str, Mapping[str, Any]]:
-    if not isinstance(raw, Mapping) or type(raw.get("schema")) is not int or raw.get("schema") != 1:
-        raise UnsupportedBundleError("Voice-level calibration catalog must use schema 1")
+    if not isinstance(raw, Mapping) or type(raw.get("schema")) is not int or raw.get("schema") not in (1, 2):
+        raise UnsupportedBundleError("Voice-level calibration catalog must use schema 1 or 2")
+    schema = raw["schema"]
     records = raw.get("records")
     if not isinstance(records, Mapping):
         raise UnsupportedBundleError("Voice-level calibration records must be an object")
+    legacy_fields = {"gain_db", "corpus", "measurements", "revision"}
+    measured_fields = {
+        "gain_db",
+        "corpus",
+        "license",
+        "provenance",
+        "measurements",
+        "revision",
+        "target_lufs",
+        "max_true_peak_dbtp",
+        "median_measured_lufs",
+        "max_measured_sample_peak_dbfs",
+        "max_measured_true_peak_dbtp",
+        "predicted_median_lufs",
+        "predicted_max_sample_peak_dbfs",
+        "predicted_max_true_peak_dbtp",
+        "max_abs_gain_db",
+        "measurement_tool",
+        "measurement_tool_version",
+        "measurement_method",
+        "sample_rates",
+        "durations_seconds",
+        "measured_lufs",
+        "measured_sample_peak_dbfs",
+        "measured_true_peak_dbtp",
+        "sample_sha256s",
+    }
     validated: dict[str, Mapping[str, Any]] = {}
     for key, record in records.items():
         if not isinstance(key, str) or not key or not isinstance(record, Mapping):
-            raise UnsupportedBundleError("Voice-level calibration entries must be keyed objects")
-        if set(record) != {"gain_db", "corpus", "measurements", "revision"}:
+            raise UnsupportedBundleError("Calibration entries must be keyed objects")
+        expected_fields = legacy_fields if schema == 1 else measured_fields
+        if set(record) != expected_fields:
             raise UnsupportedBundleError(f"Calibration record {key!r} has an unsupported schema")
         gain = record.get("gain_db")
         if isinstance(gain, bool) or not isinstance(gain, Real) or not math.isfinite(float(gain)):
@@ -37,24 +67,134 @@ def _validate_catalog(raw: Any) -> Mapping[str, Mapping[str, Any]]:
         revision = record.get("revision")
         corpus = record.get("corpus")
         measurements = record.get("measurements")
-        if not isinstance(revision, str) or not revision:
+        if not isinstance(revision, str) or not revision.strip():
             raise UnsupportedBundleError(f"Calibration record {key!r} must declare its revision")
-        if not isinstance(corpus, str) or not corpus:
+        if not isinstance(corpus, str) or not corpus.strip():
             raise UnsupportedBundleError(f"Calibration record {key!r} must declare its corpus")
         if type(measurements) is not int or measurements <= 0:
             raise UnsupportedBundleError(
                 f"Calibration record {key!r} must declare a positive measurement count"
             )
-        validated[key] = MappingProxyType(
-            {
-                "gain_db": float(gain),
-                "corpus": corpus,
-                "measurements": measurements,
-                "revision": revision,
-            }
-        )
-    return MappingProxyType(validated)
+        if schema == 1:
+            validated[key] = MappingProxyType(
+                {
+                    "gain_db": float(gain),
+                    "corpus": corpus,
+                    "measurements": measurements,
+                    "revision": revision,
+                }
+            )
+            continue
 
+        for field in ("license", "provenance", "measurement_tool_version", "measurement_method"):
+            value = record.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise UnsupportedBundleError(
+                    f"Calibration record {key!r} must declare non-empty {field} metadata"
+                )
+        if record.get("measurement_tool") != "audiosig":
+            raise UnsupportedBundleError(
+                f"Calibration record {key!r} must name audiosig as its measurement tool"
+            )
+        sample_hashes = record.get("sample_sha256s")
+        if (
+            not isinstance(sample_hashes, (list, tuple))
+            or len(sample_hashes) != measurements
+            or any(
+                not isinstance(digest, str)
+                or len(digest) != 64
+                or any(character not in "0123456789abcdef" for character in digest)
+                for digest in sample_hashes
+            )
+            or len(set(sample_hashes)) != len(sample_hashes)
+        ):
+            raise UnsupportedBundleError(
+                f"Calibration record {key!r} must carry one distinct lowercase SHA-256 per measurement"
+            )
+        sample_rates = record.get("sample_rates")
+        if (
+            not isinstance(sample_rates, (list, tuple))
+            or len(sample_rates) != measurements
+            or any(type(rate) is not int or rate <= 0 for rate in sample_rates)
+        ):
+            raise UnsupportedBundleError(
+                f"Calibration record {key!r} must record a positive sample rate per measurement"
+            )
+        numeric_arrays: dict[str, tuple[float, ...]] = {}
+        for field in (
+            "durations_seconds",
+            "measured_lufs",
+            "measured_sample_peak_dbfs",
+            "measured_true_peak_dbtp",
+        ):
+            values = record.get(field)
+            if not isinstance(values, (list, tuple)) or len(values) != measurements:
+                raise UnsupportedBundleError(
+                    f"Calibration record {key!r} must record {field} per measurement"
+                )
+            converted: list[float] = []
+            for value in values:
+                if isinstance(value, bool) or not isinstance(value, Real) or not math.isfinite(float(value)):
+                    raise UnsupportedBundleError(f"Calibration record {key!r} has invalid {field}")
+                converted.append(float(value))
+            if field == "durations_seconds" and any(value <= 0 for value in converted):
+                raise UnsupportedBundleError(f"Calibration record {key!r} has non-positive durations")
+            numeric_arrays[field] = tuple(converted)
+        numeric_fields = (
+            "target_lufs",
+            "max_true_peak_dbtp",
+            "median_measured_lufs",
+            "max_measured_sample_peak_dbfs",
+            "max_measured_true_peak_dbtp",
+            "predicted_median_lufs",
+            "predicted_max_sample_peak_dbfs",
+            "predicted_max_true_peak_dbtp",
+            "max_abs_gain_db",
+        )
+        numeric: dict[str, float] = {}
+        for field in numeric_fields:
+            value = record.get(field)
+            if isinstance(value, bool) or not isinstance(value, Real) or not math.isfinite(float(value)):
+                raise UnsupportedBundleError(f"Calibration record {key!r} has invalid {field}")
+            numeric[field] = float(value)
+        if numeric["max_abs_gain_db"] <= 0 or abs(float(gain)) > numeric["max_abs_gain_db"] + 1e-9:
+            raise UnsupportedBundleError(f"Calibration record {key!r} exceeds its safe gain bound")
+        median_lufs = float(statistics.median(numeric_arrays["measured_lufs"]))
+        max_sample_peak = max(numeric_arrays["measured_sample_peak_dbfs"])
+        max_true_peak = max(numeric_arrays["measured_true_peak_dbtp"])
+        summary = (
+            ("median_measured_lufs", median_lufs),
+            ("max_measured_sample_peak_dbfs", max_sample_peak),
+            ("max_measured_true_peak_dbtp", max_true_peak),
+        )
+        if any(not math.isclose(numeric[field], value, rel_tol=0.0, abs_tol=1e-6) for field, value in summary):
+            raise UnsupportedBundleError(f"Calibration record {key!r} has inconsistent measurement summaries")
+        policy_gain = min(
+            numeric["target_lufs"] - median_lufs,
+            numeric["max_true_peak_dbtp"] - max_true_peak,
+        )
+        if not math.isclose(float(gain), policy_gain, rel_tol=0.0, abs_tol=1e-6):
+            raise UnsupportedBundleError(f"Calibration record {key!r} does not follow its target/peak policy")
+        predictions = (
+            ("predicted_median_lufs", median_lufs + float(gain)),
+            ("predicted_max_sample_peak_dbfs", max_sample_peak + float(gain)),
+            ("predicted_max_true_peak_dbtp", max_true_peak + float(gain)),
+        )
+        if any(
+            not math.isclose(numeric[field], value, rel_tol=0.0, abs_tol=1e-6)
+            for field, value in predictions
+        ):
+            raise UnsupportedBundleError(f"Calibration record {key!r} has inconsistent predicted measurements")
+        if numeric["predicted_max_true_peak_dbtp"] > numeric["max_true_peak_dbtp"] + 1e-6:
+            raise UnsupportedBundleError(f"Calibration record {key!r} exceeds its true-peak ceiling")
+        frozen = dict(record)
+        frozen.update(numeric)
+        frozen["gain_db"] = float(gain)
+        frozen["sample_rates"] = tuple(sample_rates)
+        frozen.update(numeric_arrays)
+        frozen["sample_sha256s"] = tuple(sample_hashes)
+        validated[key] = MappingProxyType(frozen)
+    return MappingProxyType(validated)
 
 def load_calibration_catalog(
     source: str | Path | Mapping[str, Any] | None = None,
@@ -126,6 +266,10 @@ def apply_voice_level_calibration(
     """Apply an explicit or exact-identity static gain without clipping or measuring audio."""
     if not isinstance(config, VoiceLevelConfig):
         raise InvalidGenerationConfigError("config must be a VoiceLevelConfig")
+    if config.mode == "off" and config.gain_db is not None:
+        raise InvalidGenerationConfigError(
+            "gain_db requires voice-level mode 'calibrated'"
+        )
     source = "off"
     gain_db = 0.0
     if config.gain_db is not None:
@@ -159,11 +303,19 @@ def apply_voice_level_calibration(
             source = "catalog"
 
     try:
-        scale = np.float32(10.0 ** (gain_db / 20.0))
+        scale_value = 10.0 ** (gain_db / 20.0)
     except OverflowError as exc:
         raise InvalidGenerationConfigError(
             "voice-level gain produces an unrepresentable scale"
         ) from exc
+    float32 = np.finfo(np.float32)
+    if (
+        not math.isfinite(scale_value)
+        or scale_value > float(float32.max)
+        or scale_value < float(float32.smallest_subnormal)
+    ):
+        raise InvalidGenerationConfigError("voice-level gain produces an unrepresentable scale")
+    scale = np.float32(scale_value)
     if not np.isfinite(scale):
         raise InvalidGenerationConfigError("voice-level gain produces an unrepresentable scale")
     output = np.asarray(audio, dtype=np.float32) * scale

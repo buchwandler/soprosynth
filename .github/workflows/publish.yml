@@ -35,7 +35,12 @@ jobs:
           python -m venv "$RUNNER_TEMP/soprosynth-wheel-venv"
           "$RUNNER_TEMP/soprosynth-wheel-venv/bin/python" -m pip install dist/*.whl
       - name: Smoke-test installed wheel outside the checkout
-        run: "$RUNNER_TEMP/soprosynth-wheel-venv/bin/python" -I tests/wheel_api_smoke.py
+        run: |
+          mkdir -p "$RUNNER_TEMP/soprosynth-wheel-smoke/tests"
+          cp tests/wheel_api_smoke.py "$RUNNER_TEMP/soprosynth-wheel-smoke/tests/"
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/soprosynth-wheel-venv/bin/python" -I \
+            "$RUNNER_TEMP/soprosynth-wheel-smoke/tests/wheel_api_smoke.py"
       - name: Preserve verified distributions
         uses: actions/upload-artifact@v4
         with:
@@ -62,8 +67,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Check PyPI project name immediately before publishing
-        run: python scripts/check_pypi_name.py --package soprosynth
+      - name: Check PyPI project name for first publication
+        if: vars.PYPI_PROJECT_CLAIMED != 'true'
+        run: python scripts/check_pypi_name.py --package soprosynth --mode first
+      - name: Defer subsequent ownership checks to PyPI Trusted Publishing
+        if: vars.PYPI_PROJECT_CLAIMED == 'true'
+        run: python scripts/check_pypi_name.py --package soprosynth --mode subsequent
       - name: Publish with PyPI Trusted Publishing
         uses: pypa/gh-action-pypi-publish@release/v1
         with:

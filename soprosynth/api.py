@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Iterator
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 
@@ -27,6 +27,7 @@ from .types import (
     LANGUAGES,
     PreparedVoice,
     RequestMeasure,
+    RuntimeCapabilities,
     RuntimeDiagnostics,
     StreamingChunk,
     SynthesisRequest,
@@ -218,11 +219,19 @@ class SoproRuntime:
         if self._closed:
             raise RuntimeClosedError("SoproRuntime is closed")
 
-    def prepare_voice(self, audio: Any, *, stream: bool = False) -> PreparedVoice:
+    def prepare_voice(
+        self,
+        audio: Any,
+        *,
+        stream: bool = False,
+        resampler: Literal["linear", "audiosig"] = "linear",
+    ) -> PreparedVoice:
         self._ensure_open()
         if type(stream) is not bool:
             raise InvalidVoiceError("stream must be a bool")
-        reference = load_reference_audio(audio, expected_sample_rate=self.sample_rate)
+        reference = load_reference_audio(
+            audio, expected_sample_rate=self.sample_rate, resampler=resampler
+        )
         if isinstance(reference, PreparedVoice):
             self._validate_voice(reference)
             return reference
@@ -441,6 +450,15 @@ class SoproRuntime:
                 close = getattr(iterator, "close", None)
                 if close is not None:
                     close()
+
+    @property
+    def capabilities(self) -> RuntimeCapabilities:
+        """Return feature support for this selected backend without loading extras."""
+        return RuntimeCapabilities(
+            backend=self.backend,
+            supports_request_measurement=self.backend == "onnx",
+            supports_streaming=self.backend == "native",
+        )
 
     @property
     def diagnostics(self) -> RuntimeDiagnostics:

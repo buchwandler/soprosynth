@@ -16,10 +16,12 @@ keywords = ["sopro", "tts", "onnx", "onnxvoice"]
 native = ["sopro>=2.2.0,<3"]
 cpu = ["onnxvoice[cpu]>=0.2.6,<0.3"]
 gpu = ["onnxvoice[gpu]>=0.2.6,<0.3"]
+audio = ["audiosig>=0.1.7,<0.2"]
 dev = ["pytest>=8", "build>=1.2", "ruff>=0.8", "setuptools_scm>=8", "twine>=5"]
 
 [project.scripts]
 soprosynth = "soprosynth.__main__:main"
+soprosynth-build-calibration = "soprosynth.calibration_builder:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -1,10 +1,12 @@
+import sys
 import wave
+from typing import Any
 
 import numpy as np
 import pytest
 
 from soprosynth import PreparedVoice
-from soprosynth.errors import InvalidVoiceError
+from soprosynth.errors import InvalidVoiceError, OptionalDependencyError
 from soprosynth.voice import fingerprint_audio, load_reference_audio
 
 
@@ -69,3 +71,38 @@ def test_linear_resampling_of_tuple_audio():
         (np.array([0.0, 1.0], dtype=np.float32), 2), expected_sample_rate=4
     )
     assert loaded.audio.tolist() == pytest.approx([0.0, 0.5, 1.0, 1.0])
+
+
+
+def test_audiosig_resampling_is_opt_in_anti_aliased_and_rate_correct():
+    pytest.importorskip("audiosig")
+    source_rate = 48000
+    positions = np.arange(source_rate, dtype=np.float64)
+    above_target_nyquist = np.sin(2 * np.pi * 15000 * positions / source_rate).astype(np.float32)
+
+    loaded = load_reference_audio(
+        (above_target_nyquist, source_rate),
+        expected_sample_rate=24000,
+        resampler="audiosig",
+    )
+
+    assert loaded.sample_rate == 24000
+    assert loaded.audio.shape == (24000,)
+    assert loaded.audio.dtype == np.float32 and loaded.audio.flags.c_contiguous
+    assert np.sqrt(np.mean(loaded.audio[256:-256] ** 2)) < 0.01
+
+
+def test_audiosig_resampling_missing_extra_has_actionable_error(monkeypatch):
+    monkeypatch.setitem(sys.modules, "audiosig", None)
+    with pytest.raises(OptionalDependencyError, match=r"soprosynth\[audio\]"):
+        load_reference_audio(
+            (np.ones(8, dtype=np.float32), 48000),
+            expected_sample_rate=24000,
+            resampler="audiosig",
+        )
+
+
+def test_invalid_resampler_name_is_rejected():
+    with pytest.raises(InvalidVoiceError, match="resampler"):
+        invalid_resampler: Any = "unknown"
+        load_reference_audio((np.ones(4, dtype=np.float32), 24000), resampler=invalid_resampler)

@@ -41,6 +41,8 @@ def test_native_kwargs_omit_unspecified_controls():
 def test_voice_level_config_is_strict_and_finite():
     assert VoiceLevelConfig().mode == "off"
     assert VoiceLevelConfig(mode="calibrated", gain_db=-1.0).gain_db == -1.0
+    with pytest.raises(InvalidGenerationConfigError, match="gain_db requires"):
+        VoiceLevelConfig(mode="off", gain_db=6.0)
     with pytest.raises(InvalidGenerationConfigError):
         VoiceLevelConfig(mode="normalized")
     with pytest.raises(InvalidGenerationConfigError):

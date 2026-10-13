@@ -1,4 +1,8 @@
-"""Demonstrate the stable request/result API."""
+"""Demonstrate the stable native request/result API.
+
+Requires ``soprosynth[native]``, model weights, and an authorized reference.wav;
+opening an uncached model may download weights.
+"""
 
 from soprosynth import GenerationConfig, SoproRuntime, SynthesisRequest
 
