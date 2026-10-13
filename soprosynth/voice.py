@@ -19,7 +19,6 @@ class ReferenceAudio:
     audio: np.ndarray
     sample_rate: int
     source: str | None = None
-    native_source: str | None = None
 
 
 def _resample_audio(
@@ -100,12 +99,10 @@ def load_reference_audio(
     ):
         raise InvalidVoiceError("expected_sample_rate must be a positive integer")
     source_path: str | None = None
-    native_source: str | None = None
     if isinstance(source, (str, Path)):
         path = Path(source).expanduser()
         audio, sample_rate = load_pcm_wav(path)
         source_path = str(path.resolve())
-        native_source = source_path
     elif isinstance(source, tuple) and len(source) == 2:
         waveform, sample_rate = source
         if type(sample_rate) is not int or sample_rate <= 0:
@@ -120,10 +117,4 @@ def load_reference_audio(
     if expected_sample_rate is not None and sample_rate != expected_sample_rate:
         audio = _resample_audio(audio, sample_rate, expected_sample_rate, method=resampler)
         sample_rate = expected_sample_rate
-        native_source = None
-    return ReferenceAudio(
-        audio=audio,
-        sample_rate=sample_rate,
-        source=source_path,
-        native_source=native_source,
-    )
+    return ReferenceAudio(audio=audio, sample_rate=sample_rate, source=source_path)

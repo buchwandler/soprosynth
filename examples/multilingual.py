@@ -1,7 +1,7 @@
-"""Use explicit IDs for four native requests; no language detection is run.
+"""Submit explicit-language examples; no language detection is performed.
 
-Requires ``soprosynth[native]``, model weights, and an authorized reference.wav.
-Explicit IDs do not promise language quality or automatic language support.
+Requires ``soprosynth[cpu]``, compatible model assets, and an authorized
+reference.wav. Explicit language labels do not guarantee perceptual quality.
 """
 
 from soprosynth import SoproRuntime, SynthesisRequest
@@ -13,7 +13,7 @@ samples = {
     "de": "Hallo von SoproSynth.",
 }
 
-with SoproRuntime.from_pretrained(backend="native") as runtime:
+with SoproRuntime.from_pretrained() as runtime:
     voice = runtime.prepare_voice("reference.wav")
     for language, text in samples.items():
         request = SynthesisRequest(

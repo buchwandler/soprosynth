@@ -12,9 +12,10 @@ from soprosynth.errors import OptionalDependencyError
 
 def _identity():
     return {
-        "backend": "native",
-        "model_id": "samuel-vitorino/sopro-v2-turbo",
+        "backend": "onnx",
+        "model_id": "sopro:v2-turbo",
         "source_revision": "a" * 40,
+        "profile": "wasm-uint8",
     }
 
 
@@ -42,7 +43,7 @@ def _record(**overrides):
 def test_calibration_solver_targets_median_and_honors_true_peak_ceiling():
     key, record = _record()
 
-    assert key == f"native:sopro-v2-turbo:{'a' * 40}"
+    assert key == f"onnx:sopro:v2-turbo:{'a' * 40}:wasm-uint8"
     assert record["gain_db"] == pytest.approx(0.5)
     assert record["median_measured_lufs"] == pytest.approx(-20.0)
     assert record["predicted_median_lufs"] == pytest.approx(-19.5)
@@ -134,12 +135,12 @@ def test_calibration_cli_writes_reviewable_catalog_outside_production(tmp_path):
     assert (
         main(
             [
-                "--backend",
-                "native",
                 "--model-id",
-                "samuel-vitorino/sopro-v2-turbo",
+                "sopro:v2-turbo",
                 "--revision",
                 "a" * 40,
+                "--profile",
+                "wasm-uint8",
                 "--audio",
                 str(source),
                 "--corpus",

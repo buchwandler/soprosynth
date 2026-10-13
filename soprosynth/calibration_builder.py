@@ -49,9 +49,7 @@ def build_calibration_record(
     """Solve a bounded uniform gain and return a provenance-rich catalog record."""
     key = calibration_key(identity)
     if key is None:
-        raise ValueError(
-            "identity must include a supported backend, model, exact revision, and ONNX profile"
-        )
+        raise ValueError("identity must be ONNX and include a model, exact revision, and profile")
     revision = identity.get("source_revision") or identity.get("revision")
     assert isinstance(revision, str)
     if revision != revision.strip():
@@ -229,10 +227,9 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Build one offline voice-level calibration record from licensed PCM WAV measurements."
     )
-    parser.add_argument("--backend", required=True, choices=("native", "onnx"))
     parser.add_argument("--model-id", required=True)
     parser.add_argument("--revision", required=True, help="exact immutable model revision")
-    parser.add_argument("--profile", help="required for ONNX calibration identity")
+    parser.add_argument("--profile", required=True, help="ONNXVoice inference profile")
     parser.add_argument(
         "--audio", action="append", required=True, help="licensed output WAV; repeat per sample"
     )
@@ -259,15 +256,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
     identity: dict[str, object] = {
-        "backend": args.backend,
+        "backend": "onnx",
         "model_id": args.model_id,
         "source_revision": args.revision,
+        "profile": args.profile,
     }
-    if args.profile is not None:
-        identity["profile"] = args.profile
     key = calibration_key(identity)
     if key is None:
-        parser.error("the identity must include an exact supported revision and an ONNX profile")
+        parser.error("the identity must include an exact ONNX revision and profile")
 
     output = args.output.expanduser().resolve()
     if output == _PRODUCTION_CATALOG.resolve():

@@ -254,7 +254,7 @@ def load_calibration_catalog(
 
 
 def calibration_key(identity: Mapping[str, Any] | None) -> str | None:
-    """Build a stable key only when the backend, model, exact revision, and profile are known."""
+    """Build a stable key only for an exact ONNX model, revision, and profile identity."""
     if not isinstance(identity, Mapping):
         return None
     backend = identity.get("backend")
@@ -262,7 +262,7 @@ def calibration_key(identity: Mapping[str, Any] | None) -> str | None:
     revision = identity.get("source_revision") or identity.get("revision")
     if (
         not isinstance(backend, str)
-        or backend not in {"native", "onnx"}
+        or backend != "onnx"
         or not isinstance(model_id, str)
         or not model_id.strip()
         or not isinstance(revision, str)
@@ -274,8 +274,6 @@ def calibration_key(identity: Mapping[str, Any] | None) -> str | None:
         canonical_model = "sopro-v2-turbo"
     elif canonical_model.startswith("sopro:"):
         canonical_model = canonical_model.removeprefix("sopro:")
-    if backend == "native":
-        return f"native:{canonical_model}:{revision}"
     profile = identity.get("profile")
     if not isinstance(profile, str) or not profile.strip():
         return None

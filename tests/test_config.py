@@ -28,9 +28,9 @@ def test_invalid_generation_configs(kwargs):
         GenerationConfig(**kwargs)
 
 
-def test_native_kwargs_omit_unspecified_controls():
+def test_inference_kwargs_omit_unspecified_controls():
     config = GenerationConfig(temperature=0.7, top_p=0.9, top_k=12, max_seconds=3)
-    assert config.as_native_kwargs() == {
+    assert config.as_inference_kwargs() == {
         "temperature": 0.7,
         "top_p": 0.9,
         "top_k": 12,

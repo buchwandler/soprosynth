@@ -401,9 +401,7 @@ class OnnxVoiceBackend:
             or installation_metadata.get("source_revision")
         )
 
-    def prepare_reference(self, reference: ReferenceAudio, *, stream: bool = False) -> Any:
-        if stream:
-            raise RuntimeCapabilityError("ONNXVoice Sopro reference preparation is not streaming")
+    def prepare_reference(self, reference: ReferenceAudio) -> Any:
         try:
             return self._engine.prepare_voice(reference.audio, sample_rate=reference.sample_rate)
         except Exception as exc:
@@ -432,9 +430,6 @@ class OnnxVoiceBackend:
         except Exception as exc:
             raise _map_backend_error(exc, "inference") from exc
         return result.audio
-
-    def stream(self, text: str, **kwargs: Any):
-        raise RuntimeCapabilityError("ONNXVoice Sopro streaming is not supported")
 
     def diagnostics(self) -> PublicRuntimeDiagnostics:
         try:

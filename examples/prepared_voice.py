@@ -1,12 +1,13 @@
-"""Prepare one voice and reuse it on the same native runtime only.
+"""Prepare one reference voice and reuse it within the same runtime.
 
-Requires ``soprosynth[native]``, model weights, and an authorized reference.wav;
-prepared voice state is not portable across runtimes or processes.
+Requires ``soprosynth[cpu]``, compatible model assets, and an authorized
+reference.wav. Prepared voice state is runtime-bound and is not portable across
+runtimes or processes.
 """
 
 from soprosynth import SoproRuntime, SynthesisRequest
 
-with SoproRuntime.from_pretrained(backend="native") as runtime:
+with SoproRuntime.from_pretrained() as runtime:
     voice = runtime.prepare_voice("reference.wav")
     for index, text in enumerate(("First request.", "Second request."), start=1):
         request = SynthesisRequest(

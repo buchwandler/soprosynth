@@ -1,6 +1,7 @@
-"""Inspect static native discovery and identities with the base installation only.
+"""Inspect the ONNXVoice Sopro catalog and runtime identity.
 
-This does not load a speech model or import optional runtime packages.
+Discovery may access ONNXVoice catalog metadata but does not open a synthesis
+runtime. Model inference requires ``soprosynth[cpu]``.
 """
 
 from soprosynth import discover_bundles, request_api_contract, runtime_identity

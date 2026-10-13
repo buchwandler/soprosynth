@@ -23,23 +23,16 @@ def test_v1_request_contract():
     assert contract.caller_owns_text_boundaries is True
     assert contract.supports_reference_voice is True
     assert contract.supports_request_measurement is True
+    assert contract.supports_streaming is False
     assert contract.supports_linguistic_tokens is False
     assert contract.supports_pronunciation_overrides is False
 
 
-def test_runtime_capabilities_are_backend_specific_without_optional_imports():
-    native = SoproRuntime(object()).capabilities
-    onnx = SoproRuntime(object(), backend="onnx").capabilities
+def test_runtime_capabilities_report_onnxvoice_only():
+    capabilities = SoproRuntime(object()).capabilities
 
-    assert isinstance(native, RuntimeCapabilities)
-    assert native.backend == "native"
-    assert native.supports_streaming is True
-    assert native.supports_request_measurement is False
-    assert native.supports_prepared_voice_reuse is True
-    assert onnx.backend == "onnx"
-    assert onnx.supports_streaming is False
-    assert onnx.supports_request_measurement is True
-    assert request_api_contract().version == 1
-    assert request_api_contract().supports_streaming is True
-    assert request_api_contract().supports_request_measurement is True
-    assert "onnxvoice" not in __import__("sys").modules
+    assert isinstance(capabilities, RuntimeCapabilities)
+    assert capabilities.backend == "onnx"
+    assert capabilities.supports_streaming is False
+    assert capabilities.supports_request_measurement is True
+    assert capabilities.supports_prepared_voice_reuse is True

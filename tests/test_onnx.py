@@ -88,7 +88,6 @@ def test_managed_runtime_uses_onnxvoice_and_public_api(monkeypatch):
     monkeypatch.setattr(boundary, "_load_onnxvoice", lambda: fake_api)
 
     runtime = SoproRuntime.from_pretrained(
-        backend="onnx",
         model="sopro:v2-turbo",
         providers="cpu",
         provider_options={"CPUExecutionProvider": {"arena_extend_strategy": "kSameAsRequested"}},

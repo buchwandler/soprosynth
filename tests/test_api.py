@@ -1,6 +1,6 @@
-import sys
-import types
-import wave
+from __future__ import annotations
+
+import inspect
 from typing import Any, cast
 
 import numpy as np
@@ -12,7 +12,6 @@ from soprosynth import (
     SoproRuntime,
     SynthesisRequest,
     SynthesisResult,
-    UnsupportedFeatureError,
 )
 from soprosynth.errors import (
     EmptyTextError,
@@ -52,63 +51,104 @@ def test_result_validation_and_float32_normalization():
         SynthesisResult("speech", cast(Any, [float("nan")]), 24000, "hello", "en")
 
 
-def test_native_backend_wiring(monkeypatch, tmp_path):
-    path = tmp_path / "reference.wav"
-    with wave.open(str(path), "wb") as writer:
-        writer.setnchannels(1)
-        writer.setsampwidth(2)
-        writer.setframerate(24000)
-        writer.writeframes(b"\x00\x00")
+class FakeEngine:
+    sample_rate = 24000
+    profile = "wasm-uint8"
+    model_id = "sopro:v2-turbo"
+    source_revision = "revision-1"
 
-    prepared_calls = []
+    def __init__(self):
+        self.prepared = []
+        self.measured = []
+        self.closed = False
 
-    class FakeNative:
-        sample_rate = 24000
+    def prepare_reference(self, reference):
+        self.prepared.append(reference)
+        return {"voice": len(self.prepared)}
 
-        @classmethod
-        def from_pretrained(cls, *args, **kwargs):
-            return cls()
+    def measure_text(self, text, language=None):
+        self.measured.append((text, language))
+        return 2
 
-        def prepare_reference(self, **kwargs):
-            prepared_calls.append(kwargs)
-            assert kwargs["ref_audio_path"] == path
-            return {"voice": 1}
+    def synthesize(self, text, **kwargs):
+        assert text == "hello"
+        assert kwargs["lang"] == "de"
+        assert kwargs["ref"] == {"voice": 1}
+        return np.array([0.25, -0.25], dtype=np.float32)
 
-        def synthesize(self, text, **kwargs):
-            assert text == "hello"
-            assert kwargs["lang"] == "de"
-            assert kwargs["ref"] == {"voice": 1}
-            return np.array([0.25, -0.25], dtype=np.float32)
+    def close(self):
+        self.closed = True
 
-        def stream(self, text, **kwargs):
-            yield np.array([0.5], dtype=np.float32)
 
-    monkeypatch.setitem(sys.modules, "sopro", types.SimpleNamespace(SoproTTS=FakeNative))
-    with SoproRuntime.from_pretrained() as runtime:
-        voice = runtime.prepare_voice(path)
-        assert runtime.prepare_voice(voice) is voice
-        assert len(prepared_calls) == 1
-        request = SynthesisRequest(id="a", text="hello", language="de")
-        result = runtime.synthesize(request, voice=voice)
-        assert result.audio.tolist() == pytest.approx([0.25, -0.25])
-        assert result.id == "a"
-        assert result.metadata["backend"] == "native"
-        with pytest.raises(UnsupportedFeatureError):
-            runtime.measure_request(request)
-        runtime.synthesize(SynthesisRequest(id="b", text="hello", language="de"), voice=voice)
-        assert len(prepared_calls) == 1
-        assert next(iter(runtime.stream(request, voice=voice))).id == "a"
+def test_from_pretrained_routes_to_onnxvoice_with_canonical_defaults(monkeypatch):
+    import soprosynth._onnxvoice as boundary
+
+    calls = []
+    engine = FakeEngine()
+
+    def install_and_open(*args, **kwargs):
+        calls.append((args, kwargs))
+        return engine
+
+    monkeypatch.setattr(boundary, "install_and_open", install_and_open)
+    runtime = SoproRuntime.from_pretrained()
+
+    assert calls == [
+        (
+            ("sopro:v2-turbo",),
+            {
+                "profile": "wasm-uint8",
+                "providers": "cpu",
+                "provider_options": None,
+                "session_options": None,
+                "force": False,
+                "refresh": False,
+                "progress": None,
+            },
+        )
+    ]
+    assert runtime.backend == "onnx"
+    assert runtime.model_id == "sopro:v2-turbo"
+    assert runtime.capabilities.supports_request_measurement is True
+    assert runtime.capabilities.supports_streaming is False
+
+    voice = runtime.prepare_voice((np.array([0.1, -0.1], dtype=np.float32), 24000))
+    assert runtime.prepare_voice(voice) is voice
+    request = SynthesisRequest("request-1", "hello", language="de")
+    result = runtime.synthesize(request, voice=voice)
+    assert result.audio.tolist() == pytest.approx([0.25, -0.25])
+    assert result.metadata["backend"] == "onnx"
+    measured = runtime.measure_request(request, maximum=2)
+    assert measured.amount == 2 and measured.fits is True
+    assert engine.measured == [("hello", "de")]
+    runtime.close()
+    assert engine.closed
     with pytest.raises(RuntimeClosedError):
-        runtime.prepare_voice(path)
-
-    other = SoproRuntime.from_pretrained()
-    with pytest.raises(InvalidVoiceError):
-        other.synthesize(request, voice=voice)
-    other.close()
+        runtime.prepare_voice((np.array([0.1], dtype=np.float32), 24000))
 
 
-def test_unsupported_backend_is_explicit():
-    from soprosynth import RuntimeCapabilityError
+def test_public_api_has_only_onnxvoice_runtime_controls():
+    runtime_params = inspect.signature(SoproRuntime.from_pretrained).parameters
+    assert set(runtime_params) == {
+        "model",
+        "profile",
+        "providers",
+        "provider_options",
+        "session_options",
+        "force",
+        "refresh",
+        "progress",
+    }
+    voice_params = inspect.signature(SoproRuntime.prepare_voice).parameters
+    assert "stream" not in voice_params
+    assert not hasattr(SoproRuntime(FakeEngine()), "stream")
 
-    with pytest.raises(RuntimeCapabilityError):
-        SoproRuntime.from_pretrained(backend="auto")
+
+def test_prepared_voice_remains_runtime_bound():
+    first = SoproRuntime(FakeEngine())
+    second = SoproRuntime(FakeEngine())
+    voice = first.prepare_voice((np.array([0.1], dtype=np.float32), 24000))
+    with pytest.raises(InvalidVoiceError, match="owned by another runtime"):
+        second.synthesize(SynthesisRequest("request-1", "hello", language="de"), voice=voice)
+    first.close()
+    second.close()

@@ -4,30 +4,40 @@ from pathlib import Path
 import pytest
 
 import soprosynth.__main__ as cli
-from soprosynth import RuntimeDiagnostics, __version__
+from soprosynth import DiscoveredBundle, RuntimeDiagnostics, __version__
 
 
 def test_info_reports_contract_and_runtime_identity_without_model(monkeypatch, capsys):
-    monkeypatch.setattr(cli, "runtime_identity", lambda: {"backend": "native", "revision": None})
+    identity = {"engine_version": "0.1.0", "onnxvoice_version": None}
+    monkeypatch.setattr(cli, "runtime_identity", lambda: identity)
 
     assert cli.main(["info"]) == 0
-
     payload = json.loads(capsys.readouterr().out)
     assert payload["version"] == __version__
     assert payload["api"]["version"] == 1
     assert payload["api"]["supports_request_measurement"] is True
-    assert payload["runtime"]["revision"] is None
+    assert payload["api"]["supports_streaming"] is False
+    assert payload["runtime"] == identity
 
 
-def test_discover_prints_json_serializable_immutable_descriptors(capsys):
-    assert cli.main(["discover", "--backend", "native"]) == 0
+def test_discover_prints_onnxvoice_catalog_without_backend_selector(monkeypatch, capsys):
+    calls = []
+    bundle = DiscoveredBundle(
+        id="v2-turbo",
+        ref="sopro:v2-turbo",
+        display_name="Sopro v2 Turbo",
+        metadata={"backend": "onnx"},
+    )
+    monkeypatch.setattr(cli, "discover_bundles", lambda **kwargs: calls.append(kwargs) or (bundle,))
 
+    assert cli.main(["discover", "--offline", "--refresh"]) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert len(payload) == 1
-    assert payload[0]["metadata"]["backend"] == "native"
+    assert calls == [{"offline": True, "refresh": True, "cache_dir": None}]
+    assert payload[0]["metadata"]["backend"] == "onnx"
+    assert "backend" not in vars(cli._build_parser().parse_args(["discover"]))
 
 
-def test_speak_routes_backend_generation_and_voice_level_options(monkeypatch, capsys):
+def test_speak_routes_canonical_runtime_options_and_voice_level(monkeypatch, capsys):
     calls = {}
 
     class FakeResult:
@@ -57,7 +67,6 @@ def test_speak_routes_backend_generation_and_voice_level_options(monkeypatch, ca
             return FakeResult()
 
     monkeypatch.setattr(cli, "SoproRuntime", FakeRuntime)
-
     assert (
         cli.main(
             [
@@ -67,8 +76,6 @@ def test_speak_routes_backend_generation_and_voice_level_options(monkeypatch, ca
                 "reference.wav",
                 "--out",
                 "hello.wav",
-                "--backend",
-                "native",
                 "--language",
                 "de",
                 "--top-k",
@@ -85,9 +92,9 @@ def test_speak_routes_backend_generation_and_voice_level_options(monkeypatch, ca
     )
 
     assert calls["runtime"] == {
-        "model": "samuel-vitorino/sopro-v2-turbo",
-        "backend": "native",
-        "device": "cpu",
+        "model": "sopro:v2-turbo",
+        "profile": "wasm-uint8",
+        "providers": "cpu",
     }
     synthesis = calls["synthesis"]
     assert synthesis["text"] == "Hallo"
@@ -104,23 +111,35 @@ def test_speak_routes_backend_generation_and_voice_level_options(monkeypatch, ca
     assert '"source": "override"' in output
 
 
+def test_cli_has_no_backend_switch_and_uses_cpu_profile_defaults(capsys):
+    parser = cli._build_parser()
+    args = parser.parse_args(["speak", "hello", "--ref", "reference.wav"])
+    assert args.model == "sopro:v2-turbo"
+    assert args.profile == "wasm-uint8"
+    assert args.provider == "cpu"
+
+    with pytest.raises(SystemExit) as error:
+        cli.main(["speak", "--help"])
+    assert error.value.code == 0
+    assert "--backend" not in capsys.readouterr().out
+
+
 def test_gain_override_requires_calibrated_mode(monkeypatch):
     monkeypatch.setattr(
         cli.SoproRuntime,
         "from_pretrained",
         classmethod(lambda cls, **kwargs: pytest.fail("runtime must not be opened")),
     )
-
     with pytest.raises(SystemExit) as error:
         cli.main(["speak", "Hello", "--ref", "reference.wav", "--gain-db", "2"])
     assert error.value.code == 2
 
 
-def test_inspect_is_labeled_experimental_and_only_prints_diagnostics(monkeypatch, capsys):
+def test_inspect_is_developer_diagnostic_and_only_prints_diagnostics(monkeypatch, capsys):
     class FakeRuntime:
         diagnostics = RuntimeDiagnostics(
             backend="onnx",
-            model_id="sopro:model",
+            model_id="sopro:v2-turbo",
             sample_rate=24000,
         )
 
@@ -131,9 +150,7 @@ def test_inspect_is_labeled_experimental_and_only_prints_diagnostics(monkeypatch
             return False
 
     monkeypatch.setattr(cli.SoproRuntime, "from_onnx_local", lambda *args, **kwargs: FakeRuntime())
-
     assert cli.main(["inspect", "./export"]) == 0
-
     output = capsys.readouterr().out
-    assert "Experimental developer inspection only" in output
-    assert '"model_id": "sopro:model"' in output
+    assert "Developer inspection only" in output
+    assert '"model_id": "sopro:v2-turbo"' in output

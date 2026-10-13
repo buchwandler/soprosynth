@@ -10,7 +10,7 @@ REQUEST_API_VERSION = 1
 
 @dataclass(frozen=True, slots=True)
 class RequestApiContract:
-    """Stable producer-level union; not a promise for every selected backend."""
+    """Stable request-level contract for the supported synthesis runtime."""
 
     version: int
     request_type: type[Any]
@@ -36,8 +36,7 @@ class RequestApiContract:
 def request_api_contract() -> RequestApiContract:
     """Return the stable v1 producer-union contract without optional imports.
 
-    A true capability means that at least one supported backend provides it;
-    inspect ``runtime.capabilities`` for the selected runtime.
+    Capabilities describe the one supported ONNXVoice runtime.
     """
     from .api import SoproRuntime
     from .types import SynthesisRequest, SynthesisResult
@@ -61,5 +60,5 @@ def request_api_contract() -> RequestApiContract:
         supports_word_timings=False,
         supports_voice_level=True,
         supports_request_measurement=True,
-        supports_streaming=True,
+        supports_streaming=False,
     )

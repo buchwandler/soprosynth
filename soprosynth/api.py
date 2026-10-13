@@ -1,9 +1,8 @@
-"""Public runtime orchestration; backend implementations stay behind lazy boundaries."""
+"""Public runtime orchestration with a lazy ONNXVoice inference boundary."""
 
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterator
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Literal
@@ -18,7 +17,6 @@ from .errors import (
     InvalidRequestError,
     InvalidVoiceError,
     ModelInferenceError,
-    RuntimeCapabilityError,
     RuntimeClosedError,
     SoproSynthError,
     UnsupportedFeatureError,
@@ -29,7 +27,6 @@ from .types import (
     RequestMeasure,
     RuntimeCapabilities,
     RuntimeDiagnostics,
-    StreamingChunk,
     SynthesisRequest,
     SynthesisResult,
 )
@@ -37,97 +34,54 @@ from .voice import ReferenceAudio, fingerprint_audio, load_reference_audio
 
 
 class SoproRuntime:
-    """Context-managed synthesis runtime with native Sopro as the default backend."""
+    """Context-managed synthesis runtime backed exclusively by ONNXVoice."""
 
     def __init__(
         self,
         engine: Any,
         *,
-        backend: str = "native",
-        model_id: str = "samuel-vitorino/sopro-v2-turbo",
+        model_id: str = "sopro:v2-turbo",
         source_revision: str | None = None,
-        device: str | None = None,
     ) -> None:
         self._engine = engine
-        self.backend = backend
+        self.backend = "onnx"
         self.profile = getattr(engine, "profile", None)
         self.model_id = model_id
         self.source_revision = source_revision
-        self.device = device
         self.sample_rate = int(getattr(engine, "sample_rate", 24000))
         self._closed = False
         self._runtime_fingerprint = uuid.uuid4().hex
-        self._active_streams: set[Any] = set()
 
     @classmethod
     def from_pretrained(
         cls,
-        model: str = "samuel-vitorino/sopro-v2-turbo",
+        model: str = "sopro:v2-turbo",
         *,
-        backend: str = "native",
-        device: str = "cpu",
-        revision: str | None = None,
-        cache_dir: str | Path | None = None,
-        quantization: str | None = None,
-        profile: str | None = None,
-        providers: str | tuple[str, ...] | None = None,
+        profile: str = "wasm-uint8",
+        providers: str | tuple[str, ...] = "cpu",
         provider_options: Any = None,
         session_options: Any = None,
         force: bool = False,
         refresh: bool = False,
         progress: Any = None,
     ) -> SoproRuntime:
-        if backend == "native":
-            if any(
-                value is not None
-                for value in (profile, providers, provider_options, session_options)
-            ):
-                raise RuntimeCapabilityError(
-                    "ONNX runtime options cannot be used with the native backend"
-                )
-            if force or refresh or progress is not None:
-                raise RuntimeCapabilityError("asset installation options require backend='onnx'")
-            from ._native import NativeBackend
+        from ._onnxvoice import install_and_open
 
-            engine = NativeBackend.from_pretrained(
-                model,
-                device=device,
-                revision=revision,
-                cache_dir=str(cache_dir) if cache_dir is not None else None,
-                quantization=quantization,
-            )
-            return cls(
-                engine,
-                backend="native",
-                model_id=model,
-                source_revision=revision,
-                device=device,
-            )
-        if backend == "onnx":
-            if revision is not None or cache_dir is not None or quantization is not None:
-                raise RuntimeCapabilityError(
-                    "revision, cache_dir, and quantization are not ONNXVoice Sopro controls"
-                )
-            from ._onnxvoice import install_and_open
-
-            engine = install_and_open(
-                model,
-                profile=profile if profile is not None else "wasm-uint8",
-                providers=providers if providers is not None else device,
-                provider_options=provider_options,
-                session_options=session_options,
-                force=force,
-                refresh=refresh,
-                progress=progress,
-            )
-            return cls(
-                engine,
-                backend="onnx",
-                model_id=engine.model_id,
-                source_revision=engine.source_revision,
-                device=device,
-            )
-        raise RuntimeCapabilityError(f"Unknown SoproSynth backend {backend!r}")
+        engine = install_and_open(
+            model,
+            profile=profile,
+            providers=providers,
+            provider_options=provider_options,
+            session_options=session_options,
+            force=force,
+            refresh=refresh,
+            progress=progress,
+        )
+        return cls(
+            engine,
+            model_id=engine.model_id,
+            source_revision=engine.source_revision,
+        )
 
     @classmethod
     def from_onnx_local(
@@ -153,10 +107,8 @@ class SoproRuntime:
         )
         return cls(
             engine,
-            backend="onnx",
             model_id=engine.model_id,
             source_revision=engine.source_revision,
-            device=str(providers),
         )
 
     @classmethod
@@ -181,10 +133,8 @@ class SoproRuntime:
         )
         return cls(
             engine,
-            backend="onnx",
             model_id=engine.model_id,
             source_revision=engine.source_revision,
-            device=str(providers),
         )
 
     @classmethod
@@ -209,10 +159,8 @@ class SoproRuntime:
         )
         return cls(
             engine,
-            backend="onnx",
             model_id=engine.model_id,
             source_revision=engine.source_revision,
-            device=str(providers),
         )
 
     def _ensure_open(self) -> None:
@@ -223,12 +171,9 @@ class SoproRuntime:
         self,
         audio: Any,
         *,
-        stream: bool = False,
         resampler: Literal["linear", "audiosig"] = "linear",
     ) -> PreparedVoice:
         self._ensure_open()
-        if type(stream) is not bool:
-            raise InvalidVoiceError("stream must be a bool")
         reference = load_reference_audio(
             audio, expected_sample_rate=self.sample_rate, resampler=resampler
         )
@@ -238,7 +183,7 @@ class SoproRuntime:
         if not isinstance(reference, ReferenceAudio):
             raise InvalidVoiceError("reference audio could not be normalized")
         try:
-            state = self._engine.prepare_reference(reference, stream=stream)
+            state = self._engine.prepare_reference(reference)
         except SoproSynthError:
             raise
         except Exception as exc:
@@ -292,11 +237,6 @@ class SoproRuntime:
         self._validate_request(request)
         if maximum is not None and (type(maximum) is not int or maximum < 0):
             raise InvalidRequestError("maximum must be a non-negative integer or None")
-        if self.backend != "onnx":
-            raise UnsupportedFeatureError(
-                "request_measurement",
-                "Exact token measurement is currently available only through ONNXVoice Sopro",
-            )
         language = request.language if request.language not in (None, "auto") else None
         try:
             amount = self._engine.measure_text(request.text, language=language)
@@ -324,7 +264,7 @@ class SoproRuntime:
         selected_voice_level = voice_level if voice_level is not None else VoiceLevelConfig()
         self._validate_voice(voice)
 
-        kwargs: dict[str, Any] = selected_config.as_native_kwargs()
+        kwargs: dict[str, Any] = selected_config.as_inference_kwargs()
         if request.language not in (None, "auto"):
             kwargs["lang"] = request.language
         kwargs["ref"] = voice.state
@@ -405,59 +345,13 @@ class SoproRuntime:
         prepared = voice if isinstance(voice, PreparedVoice) else self.prepare_voice(voice)
         return self.synthesize(request, voice=prepared, config=config, voice_level=voice_level)
 
-    def stream(
-        self,
-        request: SynthesisRequest,
-        *,
-        voice: PreparedVoice,
-        config: GenerationConfig | None = None,
-        chunk_frames: int | None = None,
-    ) -> Iterator[StreamingChunk]:
-        self._ensure_open()
-        self._validate_request(request)
-        if config is not None and not isinstance(config, GenerationConfig):
-            raise InvalidGenerationConfigError("config must be a GenerationConfig")
-        selected_config = config if config is not None else GenerationConfig()
-        self._validate_voice(voice)
-        if self.backend != "native":
-            raise RuntimeCapabilityError("streaming is not supported by this backend")
-        kwargs: dict[str, Any] = selected_config.as_native_kwargs()
-        if request.language not in (None, "auto"):
-            kwargs["lang"] = request.language
-        if chunk_frames is not None:
-            if type(chunk_frames) is not int or chunk_frames <= 0:
-                raise InvalidGenerationConfigError("chunk_frames must be a positive integer")
-            kwargs["chunk_frames"] = chunk_frames
-        kwargs["ref"] = voice.state
-        iterator: Iterator[Any] | None = None
-        try:
-            iterator = iter(self._engine.stream(request.text, **kwargs))
-            self._active_streams.add(iterator)
-            for index, chunk in enumerate(iterator):
-                yield StreamingChunk(
-                    id=request.id,
-                    index=index,
-                    audio=_to_numpy(chunk),
-                    sample_rate=self.sample_rate,
-                )
-        except SoproSynthError:
-            raise
-        except Exception as exc:
-            raise ModelInferenceError("Native Sopro streaming failed") from exc
-        finally:
-            if iterator is not None:
-                self._active_streams.discard(iterator)
-                close = getattr(iterator, "close", None)
-                if close is not None:
-                    close()
-
     @property
     def capabilities(self) -> RuntimeCapabilities:
-        """Return feature support for this selected backend without loading extras."""
+        """Return capabilities of the sole supported ONNXVoice runtime."""
         return RuntimeCapabilities(
-            backend=self.backend,
-            supports_request_measurement=self.backend == "onnx",
-            supports_streaming=self.backend == "native",
+            backend="onnx",
+            supports_request_measurement=True,
+            supports_streaming=False,
         )
 
     @property
@@ -471,19 +365,11 @@ class SoproRuntime:
             model_id=self.model_id,
             sample_rate=self.sample_rate,
             source_revision=self.source_revision,
-            device=self.device,
         )
 
     def close(self) -> None:
         if not self._closed:
             try:
-                for stream in tuple(self._active_streams):
-                    close_stream = getattr(stream, "close", None)
-                    if close_stream is not None:
-                        try:
-                            close_stream()
-                        except RuntimeError:
-                            pass
                 close = getattr(self._engine, "close", None)
                 if close is not None:
                     close()

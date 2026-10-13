@@ -7,19 +7,8 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
-from .errors import InvalidRequestError, RuntimeCapabilityError, UnsupportedBundleError
+from .errors import InvalidRequestError, UnsupportedBundleError
 from .types import DiscoveredBundle
-
-_NATIVE_BUNDLE = DiscoveredBundle(
-    id="sopro-v2-turbo",
-    ref="samuel-vitorino/sopro-v2-turbo",
-    display_name="Sopro v2 Turbo (native)",
-    aliases=("sopro-v2-turbo",),
-    languages=("en", "pt", "fr", "de"),
-    sample_rate=24000,
-    profiles=(),
-    metadata={"backend": "native", "model_id": "samuel-vitorino/sopro-v2-turbo"},
-)
 
 
 def _optional_version(distribution: str) -> str | None:
@@ -92,31 +81,23 @@ def _item_to_bundle(item: Any) -> DiscoveredBundle:
 
 def discover_bundles(
     *,
-    backend: str = "native",
     cache_dir: str | Path | None = None,
     offline: bool = False,
     refresh: bool = False,
     progress: Callable[[Mapping[str, Any]], Any] | None = None,
 ) -> tuple[DiscoveredBundle, ...]:
-    """List native Sopro metadata or ONNXVoice's Sopro catalog without opening a model."""
-    if not isinstance(backend, str) or backend not in {"native", "onnx", "all"}:
-        raise RuntimeCapabilityError("discovery backend must be 'native', 'onnx', or 'all'")
+    """List ONNXVoice's Sopro catalog without opening a model runtime."""
     if type(offline) is not bool or type(refresh) is not bool:
         raise InvalidRequestError("offline and refresh must be bool values")
-    results: list[DiscoveredBundle] = []
-    if backend in {"native", "all"}:
-        results.append(_NATIVE_BUNDLE)
-    if backend in {"onnx", "all"}:
-        from ._onnxvoice import _load_onnxvoice, _map_backend_error, _progress_adapter
+    from ._onnxvoice import _load_onnxvoice, _map_backend_error, _progress_adapter
 
-        api = _load_onnxvoice()
-        try:
-            catalog = api.CatalogClient(cache_dir=cache_dir, offline=offline)
-            items = catalog.list("sopro", refresh=refresh, progress=_progress_adapter(progress))
-            results.extend(_item_to_bundle(item) for item in items)
-        except Exception as exc:
-            raise _map_backend_error(exc, "discover") from exc
-    return tuple(results)
+    api = _load_onnxvoice()
+    try:
+        catalog = api.CatalogClient(cache_dir=cache_dir, offline=offline)
+        items = catalog.list("sopro", refresh=refresh, progress=_progress_adapter(progress))
+        return tuple(_item_to_bundle(item) for item in items)
+    except Exception as exc:
+        raise _map_backend_error(exc, "discover") from exc
 
 
 def runtime_identity(bundle: Any = None) -> dict[str, str | None]:
@@ -146,8 +127,7 @@ def runtime_identity(bundle: Any = None) -> dict[str, str | None]:
     )
     return {
         "engine_version": __version__,
-        "native_runtime_revision": _optional_version("sopro"),
-        "onnx_runtime_revision": _optional_version("onnxvoice"),
+        "onnxvoice_version": _optional_version("onnxvoice"),
         "request_api_version": str(REQUEST_API_VERSION),
         "catalog_revision": catalog_revision,
         "bundle_revision": bundle_revision,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from importlib.metadata import PackageNotFoundError
 from types import SimpleNamespace
 from typing import Any, cast
@@ -9,21 +10,14 @@ import pytest
 from soprosynth import (
     CatalogUnavailableError,
     DiscoveredBundle,
-    RuntimeCapabilityError,
     __version__,
     discover_bundles,
     runtime_identity,
 )
 
 
-def test_native_discovery_is_static_and_does_not_import_optional_backend():
-    bundles = discover_bundles()
-    assert len(bundles) == 1
-    bundle = bundles[0]
-    assert bundle.id == "sopro-v2-turbo"
-    assert bundle.metadata["backend"] == "native"
-    assert bundle.source_revision is None
-    assert "onnxvoice" not in __import__("sys").modules
+def test_discovery_has_no_backend_selector():
+    assert "backend" not in inspect.signature(discover_bundles).parameters
 
 
 def test_onnx_discovery_wraps_catalog_without_opening_a_runtime(monkeypatch, tmp_path):
@@ -63,7 +57,6 @@ def test_onnx_discovery_wraps_catalog_without_opening_a_runtime(monkeypatch, tmp
     )
     progress = []
     bundles = discover_bundles(
-        backend="onnx",
         cache_dir=tmp_path,
         offline=True,
         refresh=True,
@@ -102,7 +95,7 @@ def test_discovery_catalog_errors_are_mapped(monkeypatch):
         lambda: SimpleNamespace(CatalogClient=CatalogClient),
     )
     with pytest.raises(CatalogUnavailableError, match="catalog is unavailable"):
-        discover_bundles(backend="onnx")
+        discover_bundles()
 
 
 def test_runtime_identity_is_stable_and_uses_exact_bundle_revision(monkeypatch):
@@ -111,8 +104,6 @@ def test_runtime_identity_is_stable_and_uses_exact_bundle_revision(monkeypatch):
     def fake_version(name: str) -> str:
         if name == "soprosynth":
             return "0.1.0.dev1"
-        if name == "sopro":
-            return "2.2.0"
         if name == "onnxvoice":
             raise PackageNotFoundError(name)
         raise AssertionError(name)
@@ -133,15 +124,9 @@ def test_runtime_identity_is_stable_and_uses_exact_bundle_revision(monkeypatch):
     result = runtime_identity(bundle)
     assert result == {
         "engine_version": __version__,
-        "native_runtime_revision": "2.2.0",
-        "onnx_runtime_revision": None,
+        "onnxvoice_version": None,
         "request_api_version": "1",
         "catalog_revision": "catalog-rev",
         "bundle_revision": "source-commit",
     }
     assert runtime_identity()["bundle_revision"] is None
-
-
-def test_discovery_rejects_unknown_backend_without_model_loading():
-    with pytest.raises(RuntimeCapabilityError, match="discovery backend"):
-        discover_bundles(backend="automatic")

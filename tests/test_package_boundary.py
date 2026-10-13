@@ -6,10 +6,13 @@ def test_package_import_does_not_import_optional_runtimes():
     code = """
 import sys
 import soprosynth
-soprosynth.discover_bundles()
+
+soprosynth.request_api_contract()
 soprosynth.runtime_identity()
 assert soprosynth.REQUEST_API_VERSION == 1
-assert not ({'sopro', 'onnxvoice', 'onnxruntime'} & sys.modules.keys())
+assert "sopro" not in sys.modules
+assert "onnxruntime" not in sys.modules
+assert "onnxvoice" not in sys.modules
 """
     result = subprocess.run(
         [sys.executable, "-c", code],

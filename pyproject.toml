@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "soprosynth"
 dynamic = ["version"]
-description = "Backend-neutral Python API for the upstream Sopro text-to-speech system"
+description = "Stable Python API for ONNXVoice's Sopro V2 Turbo runtime"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
@@ -13,9 +13,7 @@ dependencies = ["numpy>=1.23"]
 keywords = ["sopro", "tts", "onnx", "onnxvoice"]
 
 [project.optional-dependencies]
-native = ["sopro>=2.2.0,<3"]
 cpu = ["onnxvoice[cpu]>=0.2.6,<0.3"]
-gpu = ["onnxvoice[gpu]>=0.2.6,<0.3"]
 audio = ["audiosig>=0.1.7,<0.2"]
 dev = ["pytest>=8", "build>=1.2", "ruff>=0.8", "setuptools_scm>=8", "twine>=5"]
 

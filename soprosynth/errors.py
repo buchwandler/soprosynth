@@ -7,16 +7,8 @@ class SoproSynthError(Exception):
     """Base class for errors raised by the SoproSynth public API."""
 
 
-# Compatibility name retained from the initial scaffold.
-SoproError = SoproSynthError
-
-
 class OptionalDependencyError(SoproSynthError):
-    """An optional backend dependency is not installed."""
-
-
-class BackendUnavailableError(OptionalDependencyError):
-    """A requested backend is missing or unavailable in this environment."""
+    """An optional dependency is not installed."""
 
 
 class InvalidRequestError(SoproSynthError):
@@ -93,10 +85,3 @@ class BundleNotFoundError(AssetError):
 
 class UnsupportedBundleError(AssetError):
     """The requested bundle format or profile is unsupported."""
-
-
-class OnnxPipelineNotImplementedError(UnsupportedFeatureError, NotImplementedError):
-    """Compatibility error for the scaffold's experimental ONNX pipeline."""
-
-    def __init__(self, message: str) -> None:
-        super().__init__("onnx_synthesis", message)

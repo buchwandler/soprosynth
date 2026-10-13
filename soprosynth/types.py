@@ -207,23 +207,6 @@ class SynthesisResult:
         return save_wav(self.audio, self.sample_rate, path)
 
 
-@dataclass(slots=True)
-class StreamingChunk:
-    id: str
-    index: int
-    audio: np.ndarray
-    sample_rate: int
-    metadata: Mapping[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        _valid_id(self.id)
-        if type(self.index) is not int or self.index < 0:
-            raise InvalidRequestError("streaming chunk index must be a non-negative integer")
-        self.audio = _validated_audio(self.audio)
-        self.sample_rate = _sample_rate(self.sample_rate)
-        self.metadata = _immutable_mapping(self.metadata, label="metadata")
-
-
 @dataclass(frozen=True, slots=True)
 class RequestMeasure:
     amount: int

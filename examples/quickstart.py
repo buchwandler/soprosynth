@@ -1,12 +1,12 @@
-"""Native one-request quickstart.
+"""One-request SoproSynth quickstart.
 
-Requires ``soprosynth[native]``, model weights, and an authorized reference.wav;
-opening an uncached model may download weights. No language detection is run.
+Requires ``soprosynth[cpu]``, compatible model assets, and an authorized
+reference.wav. The first uncached run may acquire the ONNXVoice Sopro bundle.
 """
 
 from soprosynth import SoproRuntime
 
-with SoproRuntime.from_pretrained(backend="native") as runtime:
+with SoproRuntime.from_pretrained() as runtime:
     result = runtime.synthesize_text(
         "Hello from SoproSynth.",
         id="hello",

@@ -57,8 +57,8 @@ class GenerationConfig:
         ):
             raise InvalidGenerationConfigError("min_seconds must not exceed max_seconds")
 
-    def as_native_kwargs(self) -> dict[str, int | float]:
-        """Return only explicitly configured native controls."""
+    def as_inference_kwargs(self) -> dict[str, int | float]:
+        """Return only explicitly configured inference controls."""
         return {
             key: value
             for key, value in (

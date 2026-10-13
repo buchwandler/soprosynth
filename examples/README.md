@@ -1,22 +1,34 @@
-# Example prerequisites and limits
+# Example prerequisites and support boundary
 
-Examples are runnable scripts, not offline tests. Do not run a synthesis example unless you have the required runtime, model assets, and permission to use the reference recording. Output files are written relative to the current working directory.
+These scripts are runnable examples, not offline tests. Install the ONNXVoice CPU runtime and provide a reference recording you are authorized to use before running synthesis examples. Output files are written relative to the current working directory.
 
-## Native examples
+```bash
+python -m pip install "soprosynth[cpu]"
+```
 
-Install `soprosynth[native]`, provide an authorized `reference.wav`, and let upstream Sopro access its model assets. The first uncached model open may download weights. These examples use the native backend explicitly:
+The first uncached runtime open may acquire the ONNXVoice Sopro bundle. The supported Python inference boundary is:
 
-- `quickstart.py` — one request; it does not detect language.
-- `strict_request.py` — the structured API request/result path.
-- `prepared_voice.py` — reuses a prepared reference only in the same open runtime; prepared state is not portable.
-- `multilingual.py` — submits explicit `en`, `pt`, `fr`, and `de` labels; it does not promise language detection or perceptual quality.
-- `streaming.py` — native-only. It collects all chunks in memory for the demo and makes no real-time guarantee. ONNX streaming is unsupported.
-- `calibrated_voice_level.py` — the packaged calibration catalog is empty, so this example's default calibrated request is unchanged (`missing_calibration`). It does not demonstrate measured loudness normalization.
+```text
+model: sopro:v2-turbo
+profile: wasm-uint8
+provider: CPUExecutionProvider (cpu)
+languages: en, pt, fr, de, auto
+output: mono float32 PCM at 24 kHz
+reference voice: required
+streaming: not supported
+```
 
-## Dependency-light example
+Use only reference recordings whose rights and license permit your intended use. SoproSynth does not grant rights to recordings or generated speech.
 
-`discovery.py` works with the base installation. It queries the API contract, static native bundle metadata, and runtime identity without loading a model or importing optional runtimes. The v1 request contract is a producer-level union; inspect an opened runtime's `capabilities` for backend-specific support.
+## Synthesis examples
 
-## Experimental ONNX example
+- `quickstart.py` — one request using the default ONNXVoice runtime settings.
+- `strict_request.py` — the structured request/result API and generation configuration.
+- `prepared_voice.py` — reuses prepared reference state within one runtime only.
+- `multilingual.py` — explicit `en`, `pt`, `fr`, and `de` language labels; no language detection or quality guarantee.
+- `calibrated_voice_level.py` — shows the unchanged `missing_calibration` fallback; the packaged calibration catalog is empty.
 
-`onnx_inspect.py` requires `soprosynth[cpu]` and a compatible local ONNXVoice export. It opens an ONNXVoice runtime/session to print diagnostics but does not synthesize. It is not a metadata-only/no-model check and does not establish inference quality or parity. The tested Sopro boundary is `wasm-uint8` with CPU execution; other profiles/providers and ONNX streaming remain unsupported.
+## Catalog and diagnostics examples
+
+- `discovery.py` — queries ONNXVoice catalog metadata and prints API/runtime identity; it does not open a synthesis runtime. Install `soprosynth[cpu]` to provide ONNXVoice.
+- `onnx_inspect.py` — developer diagnostics for a compatible local ONNXVoice export. It opens a session but does not synthesize or establish inference quality/parity.

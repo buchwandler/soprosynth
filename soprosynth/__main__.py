@@ -51,7 +51,7 @@ def _contract_summary() -> dict[str, Any]:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="soprosynth",
-        description="SoproSynth native-first speech synthesis and runtime information",
+        description="SoproSynth speech synthesis using ONNXVoice's Sopro runtime",
     )
     parser.add_argument("--version", action="version", version=__version__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -61,13 +61,9 @@ def _build_parser() -> argparse.ArgumentParser:
     speak.add_argument("--ref", required=True, help="reference voice WAV path")
     speak.add_argument("--out", default="out.wav", help="output mono PCM16 WAV path")
     speak.add_argument("--language", choices=("en", "pt", "fr", "de", "auto"))
-    speak.add_argument("--backend", choices=("native", "onnx"), default="native")
-    speak.add_argument("--model", default="samuel-vitorino/sopro-v2-turbo")
-    speak.add_argument(
-        "--device",
-        default="cpu",
-        help="native device or ONNX provider (Sopro ONNX currently supports CPU only)",
-    )
+    speak.add_argument("--model", default="sopro:v2-turbo")
+    speak.add_argument("--profile", default="wasm-uint8")
+    speak.add_argument("--provider", choices=("cpu",), default="cpu")
     speak.add_argument("--temperature", type=float)
     speak.add_argument("--top-p", type=float)
     speak.add_argument("--top-k", type=int)
@@ -80,8 +76,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "info", help="show API contract and runtime provenance without loading a model"
     )
 
-    discover = subparsers.add_parser("discover", help="list native or ONNX Sopro bundle metadata")
-    discover.add_argument("--backend", choices=("native", "onnx", "all"), default="native")
+    discover = subparsers.add_parser("discover", help="list ONNXVoice Sopro bundle metadata")
     discover.add_argument(
         "--offline", action="store_true", help="use catalog data available offline"
     )
@@ -92,7 +87,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     inspect = subparsers.add_parser(
         "inspect",
-        help="experimental: open a local ONNXVoice session and print diagnostics; does not synthesize",
+        help="open a local ONNXVoice session and print diagnostics; does not synthesize",
     )
     inspect.add_argument("directory", type=Path)
     inspect.add_argument("--profile", default="wasm-uint8")
@@ -112,8 +107,8 @@ def _speak(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     voice_level = VoiceLevelConfig(mode=args.voice_level, gain_db=args.gain_db)
     with SoproRuntime.from_pretrained(
         model=args.model,
-        backend=args.backend,
-        device=args.device,
+        profile=args.profile,
+        providers=args.provider,
     ) as runtime:
         result = runtime.synthesize_text(
             args.text,
@@ -133,7 +128,6 @@ def _speak(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
 
 def _discover(args: argparse.Namespace) -> int:
     bundles = discover_bundles(
-        backend=args.backend,
         offline=args.offline,
         refresh=args.refresh,
         cache_dir=args.cache_dir,
@@ -143,7 +137,7 @@ def _discover(args: argparse.Namespace) -> int:
 
 
 def _inspect(args: argparse.Namespace) -> int:
-    print("Experimental developer inspection only; this command does not run synthesis.")
+    print("Developer inspection only; this command does not run synthesis.")
     with SoproRuntime.from_onnx_local(args.directory, profile=args.profile) as runtime:
         _print_json(runtime.diagnostics)
     return 0

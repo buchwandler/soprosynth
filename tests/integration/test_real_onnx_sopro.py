@@ -62,9 +62,8 @@ def test_real_onnx_managed_install_offline_reopen_reference_and_synthesis(tmp_pa
 
     with SoproRuntime.from_pretrained(
         model=model,
-        backend="onnx",
         profile=profile,
-        device="cpu",
+        providers="cpu",
     ) as runtime:
         voice = runtime.prepare_voice(reference)
         installed_result = runtime.synthesize(

@@ -65,7 +65,7 @@ def test_prepared_voice_identity_excludes_reference_audio():
         source="reference.wav",
         model_id="m",
         source_revision="r1",
-        backend="native",
+        backend="onnx",
         runtime_fingerprint="runtime-1",
         fingerprint="a" * 64,
     )
@@ -75,7 +75,7 @@ def test_prepared_voice_identity_excludes_reference_audio():
         "sample_rate": 24000,
         "model_id": "m",
         "source_revision": "r1",
-        "backend": "native",
+        "backend": "onnx",
     }
     assert "audio" not in voice.identity
 
