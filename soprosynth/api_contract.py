@@ -21,6 +21,7 @@ class RequestApiContract:
     discovery_method: str
     runtime_identity_method: str
     caller_owns_text_boundaries: bool
+    supports_sopro_output_policy: bool
     supports_linguistic_tokens: bool
     supports_pronunciation_overrides: bool
     supports_whole_request_phonemes: bool
@@ -50,7 +51,7 @@ def request_api_contract() -> RequestApiContract:
         measurement_method="measure_request",
         discovery_method="discover_bundles",
         runtime_identity_method="runtime_identity",
-        caller_owns_text_boundaries=True,
+        caller_owns_text_boundaries=False,
         supports_linguistic_tokens=False,
         supports_pronunciation_overrides=False,
         supports_whole_request_phonemes=False,
@@ -59,6 +60,7 @@ def request_api_contract() -> RequestApiContract:
         supports_managed_reference_voice=False,
         supports_word_timings=False,
         supports_voice_level=True,
+        supports_sopro_output_policy=True,
         supports_request_measurement=True,
         supports_streaming=False,
     )

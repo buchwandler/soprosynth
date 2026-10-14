@@ -37,7 +37,7 @@ def built_wheel(tmp_path_factory):
     return wheels[0]
 
 
-def test_wheel_has_no_upstream_sopro_requirement(built_wheel):
+def test_wheel_has_core_audiosig_and_no_upstream_sopro_requirement(built_wheel):
     with zipfile.ZipFile(built_wheel) as archive:
         metadata_paths = [
             name for name in archive.namelist() if name.endswith(".dist-info/METADATA")
@@ -47,6 +47,14 @@ def test_wheel_has_no_upstream_sopro_requirement(built_wheel):
 
     requirements = [Requirement(value) for value in metadata.get_all("Requires-Dist", [])]
     assert all(requirement.name.lower() != "sopro" for requirement in requirements)
+
+    audiosig = [
+        requirement for requirement in requirements if requirement.name.lower() == "audiosig"
+    ]
+    assert len(audiosig) == 1
+    assert audiosig[0].marker is None
+    assert audiosig[0].specifier.contains("0.1.8")
+    assert not audiosig[0].specifier.contains("0.2")
 
 
 def test_wheel_imports_without_upstream_sopro_or_inference_modules(built_wheel, tmp_path):

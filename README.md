@@ -1,24 +1,26 @@
 # SoproSynth
 
-SoproSynth provides a stable Python request/result API around ONNXVoice's built-in Sopro V2 Turbo implementation. SoproSynth owns request validation, reference-voice lifecycle, loudness calibration policy, result metadata, and WAV output. ONNXVoice owns Sopro model assets, tokenization, graph/session execution, and inference.
+SoproSynth provides a stable Python request/result API around ONNXVoice's built-in Sopro V2 Turbo implementation. SoproSynth owns request validation, original-rate reference forwarding, upstream-compatible offline text segmentation and semantic-token carry, native/raw output conditioning through AudioSig, optional application-level voice calibration, result metadata, and WAV output. ONNXVoice owns model assets, tokenization, ONNX graph/session execution, and neural inference.
 
-SoproSynth supports one synthesis path: ONNXVoice's Sopro adapter. It does not vendor model weights or implement ONNX inference itself. Python 3.10 or newer is required.
+SoproSynth executes only ONNX graphs through ONNXVoice. It has no runtime dependency on the native `sopro` Python package and does not copy Sopro neural modules or model weights. Python 3.10 or newer is required.
 
 ## Support boundary
 
-| Capability           | v0.1.0 support                                            |
-| -------------------- | --------------------------------------------------------- |
-| Model                | `sopro:v2-turbo`                                          |
-| Profile              | `wasm-uint8`                                              |
-| Provider             | CPU (`CPUExecutionProvider`)                              |
-| Languages            | `en`, `pt`, `fr`, `de`, and `auto`                        |
-| Input                | One text request and a prepared reference voice           |
-| Output               | Mono float32 PCM at 24 kHz; `save_wav()` writes PCM16 WAV |
-| Prepared voice reuse | Supported within the same open runtime                    |
-| Request measurement  | Supported through ONNXVoice text preparation              |
-| Streaming            | Not supported                                             |
+| Capability           | Current support                                              |
+| -------------------- | ------------------------------------------------------------ |
+| Model                | `sopro:v2-turbo`                                             |
+| Profile              | `wasm-uint8` (portable, quantized)                           |
+| Provider             | CPU (`CPUExecutionProvider`)                                 |
+| Languages            | `en`, `pt`, `fr`, `de`, and `auto`                           |
+| Input                | Text request and prepared reference voice                    |
+| Long text            | Upstream-compatible splitting and semantic-token carry       |
+| Output               | Native-compatible conditioning by default; raw mode optional |
+| Audio                | Mono float32 PCM at 24 kHz; `save_wav()` writes PCM16 WAV    |
+| Prepared voice reuse | Supported within the same open runtime                       |
+| Request measurement  | Supported through ONNXVoice text preparation                 |
+| Streaming            | Not supported                                                |
 
-Unsupported profiles and providers fail explicitly. SoproSynth does not perform language detection, text segmentation, pronunciation overrides, linguistic-token processing, word alignment, or final mastering.
+Unsupported profiles and providers fail explicitly. `SoproOutputConfig(mode="native")` selects only Sopro-compatible DSP conditioning; it does not select native PyTorch inference or imply a model-quality tier. Language detection, pronunciation overrides, linguistic-token processing, word alignment, and streaming are not supported.
 
 ## Install
 
@@ -34,13 +36,7 @@ For development:
 python -m pip install -e ".[cpu,dev]"
 ```
 
-Optional audio tools remain separate:
-
-```bash
-python -m pip install "soprosynth[audio]"
-```
-
-The audio extra provides opt-in anti-aliased reference resampling and offline loudness/peak measurement for calibration records. It is not required for synthesis.
+AudioSig `>=0.1.8,<0.2` is a required runtime dependency for reference-rate handling and output conditioning. ONNXVoice remains optional until inference is requested; install the `cpu` extra to synthesize.
 
 ## Quickstart
 
@@ -59,12 +55,12 @@ with SoproRuntime.from_pretrained() as runtime:
     result.save_wav("hello.wav")
 ```
 
-The default model is `sopro:v2-turbo`; defaults are profile `wasm-uint8` and CPU execution. See [`examples/quickstart.py`](examples/quickstart.py).
+The default model is `sopro:v2-turbo`; defaults are profile `wasm-uint8`, CPU execution, and native-compatible output conditioning. The `native` output mode is DSP policy, not native PyTorch inference or a quality-tier claim. See [`examples/quickstart.py`](examples/quickstart.py).
 
 ## Structured API
 
 ```python
-from soprosynth import GenerationConfig, SoproRuntime, SynthesisRequest
+from soprosynth import GenerationConfig, SoproOutputConfig, SoproRuntime, SynthesisRequest
 
 with SoproRuntime.from_pretrained(
     model="sopro:v2-turbo",
@@ -81,39 +77,53 @@ with SoproRuntime.from_pretrained(
         request,
         voice=voice,
         config=GenerationConfig(temperature=0.8, top_p=0.9, top_k=40),
+        output=SoproOutputConfig(mode="native"),
     )
 ```
 
-`SynthesisRequest` requires a stable ID and a non-empty text value. Supported language IDs are `en`, `pt`, `fr`, `de`, and `auto` (or `None` where allowed). The caller owns text preparation and segment boundaries.
+`SynthesisRequest` requires a stable ID and non-empty text. SoproSynth applies Sopro's upstream-compatible character/sentence segmentation and carries the last configured generated semantic tokens between segments. An installed ONNXVoice runtime that lacks this optional segment contract fails clearly for requests that need multiple segments.
 
-`runtime.prepare_voice(...)` normalizes and prepares a reference recording for the open runtime. Reuse the resulting `PreparedVoice` only with that same runtime; prepared voice state is not portable across runtimes, model revisions, or processes. `runtime.measure_request(request)` uses ONNXVoice text preparation to report the token count.
+`runtime.prepare_voice(...)` forwards clean mono float32 reference samples at their original sample rate by default; ONNXVoice owns Sopro reference preprocessing. Explicit `resampler="linear"` or `resampler="audiosig"` selects a legacy SoproSynth-side conversion override. Reuse a `PreparedVoice` only with its creating runtime; its state is not portable across runtimes, model revisions, or processes. `runtime.measure_request(request)` uses ONNXVoice text preparation to report the token count.
 
-`request_api_contract().supports_streaming` and `runtime.capabilities.supports_streaming` are both `False`. Runtime capabilities report request measurement and prepared-voice reuse as supported.
+`request_api_contract().supports_streaming` and `runtime.capabilities.supports_streaming` are both `False`. The request contract reports automatic text boundaries (`caller_owns_text_boundaries=False`) and support for the native/raw output policy.
 
 ## CLI
 
-```bash
+````bash
 soprosynth speak "Hello from SoproSynth." \
   --ref reference.wav \
   --out speech.wav \
   --model sopro:v2-turbo \
   --profile wasm-uint8 \
-  --provider cpu
+  --provider cpu \
+  --output-mode native
 
+soprosynth speak "Hello from SoproSynth." --ref reference.wav --output-mode raw
 soprosynth discover [--offline] [--refresh] [--cache-dir PATH]
 soprosynth info
 soprosynth inspect EXPORT_DIRECTORY --profile wasm-uint8
-```
 
-`speak` accepts language, generation controls, and optional voice-level calibration controls. `discover` queries ONNXVoice catalog metadata. `inspect` is a developer diagnostic for a compatible local export; it opens a runtime session but does not synthesize.
+`speak` accepts language, generation controls, `--output-mode native|raw`, and optional voice-level calibration controls. `native` is the default. `discover` queries ONNXVoice catalog metadata. `inspect` is a developer diagnostic for a compatible local export; it opens a runtime session but does not synthesize.
+
+## Native/raw output policy
+
+`SoproOutputConfig()` defaults to `mode="native"`. It derives gain from ONNXVoice's prepared reference-level metadata (target `-23 dB`; no integrated-LUFS estimate). Trimming keeps 80 ms of first-segment lead, uses 300 ms of later lead with a 100 ms skip, and keeps 300 ms of trailing audio per segment. Joins use 10 ms edge fades, followed by the `0.9` soft limiter and an 80 ms final fade. Native mode requires finite `PreparedVoice.metadata["reference_level_db"]`; missing metadata raises a clear capability error.
+
+`SoproOutputConfig(mode="raw")` concatenates unconditioned ONNX vocoder segment waveforms without native gain, trimming, fades, or limiting. Long requests still use Sopro-compatible segmentation and semantic-token carry. Optional voice-level calibration can still be applied afterward. Output-policy measurements are reported under `metadata["sopro_output"]`.
+
+Optional `VoiceLevelConfig(mode="calibrated")` is a separate layer applied after the selected output mode. It defaults off, is reported under `metadata["voice_level_application"]`, and is not part of Sopro's reference-relative gain policy.
 
 ## Voice-level calibration
 
 Voice-level processing is opt-in through `VoiceLevelConfig`. The packaged calibration catalog is empty because no measured corpus was supplied. In calibrated mode, a gain is used only for an exact ONNX model, immutable source revision, and profile. If there is no exact record, the result reports `source="missing_calibration"` and leaves the audio unchanged. A caller may instead provide an explicit static `gain_db` override; this applies linear gain without measuring or clipping the in-memory result.
 
-Build a reviewable calibration record from licensed PCM WAVs with the optional `soprosynth[audio]` extra and `soprosynth-build-calibration`. The command requires `--model-id`, immutable `--revision`, `--profile`, corpus/license/provenance metadata, explicit loudness/true-peak policy, and `--i-have-rights`. It writes an external reviewable catalog and does not modify the packaged catalog.
+Build a reviewable calibration record from licensed PCM WAVs with the declared AudioSig dependency and `soprosynth-build-calibration`. The command requires `--model-id`, immutable `--revision`, `--profile`, corpus/license/provenance metadata, explicit loudness/true-peak policy, and `--i-have-rights`. It writes an external reviewable catalog and does not modify the packaged catalog.
 
-Reference-rate conversion uses dependency-free linear interpolation by default. To opt into anti-aliased resampling, install the audio extra and call `runtime.prepare_voice(reference, resampler="audiosig")`.
+AudioSig is a required core dependency and supplies the Sopro-compatible gain, boundary, fade, join, and limiter operations. The default reference path does not pre-resample; explicitly select legacy model-rate conversion with `runtime.prepare_voice(reference, resampler="linear")` or `resampler="audiosig"`.
+
+## Reference-rate and model-quality boundary
+
+Only the portable `wasm-uint8` profile is currently accepted by the Python runtime; it is quantized and is not native-PyTorch-equivalent. `cpu-fp32` remains unsupported until upstream exports, pinned graph artifacts, and direct fp32 oracle outputs are available. A licensed native-versus-ONNX listening corpus is also an external release dependency. Unit tests and portable graph goldens do not satisfy those quality gates; SoproSynth makes no native-quality or full-parity claim.
 
 ## Discovery and runtime identity
 
@@ -140,6 +150,6 @@ python -m pip install -e ".[cpu,dev]"
 python -m pytest -q
 ruff check .
 python -m build
-```
+````
 
 SoproSynth source code is licensed under Apache-2.0. Pretrained model assets and reference recordings are separate resources governed by their own licenses and usage terms.

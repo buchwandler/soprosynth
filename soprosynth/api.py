@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import math
 import uuid
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict
+from numbers import Integral, Real
 from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
 
-from .config import GenerationConfig, VoiceLevelConfig
+from .config import GenerationConfig, SoproOutputConfig, VoiceLevelConfig
 from .errors import (
     EmptyTextError,
     InvalidGenerationConfigError,
@@ -17,10 +20,12 @@ from .errors import (
     InvalidRequestError,
     InvalidVoiceError,
     ModelInferenceError,
+    RuntimeCapabilityError,
     RuntimeClosedError,
     SoproSynthError,
     UnsupportedFeatureError,
 )
+from .postprocess import DEFAULT_MAX_SEGMENT_CHARS, condition_sopro_output, split_text
 from .types import (
     LANGUAGES,
     PreparedVoice,
@@ -30,7 +35,7 @@ from .types import (
     SynthesisRequest,
     SynthesisResult,
 )
-from .voice import ReferenceAudio, fingerprint_audio, load_reference_audio
+from .voice import ReferenceAudio, load_reference_audio
 
 
 class SoproRuntime:
@@ -171,11 +176,14 @@ class SoproRuntime:
         self,
         audio: Any,
         *,
-        resampler: Literal["linear", "audiosig"] = "linear",
+        resampler: Literal["linear", "audiosig"] | None = None,
     ) -> PreparedVoice:
+        """Preserve the source rate by default; explicitly select a legacy model-rate resampler."""
         self._ensure_open()
         reference = load_reference_audio(
-            audio, expected_sample_rate=self.sample_rate, resampler=resampler
+            audio,
+            expected_sample_rate=self.sample_rate if resampler is not None else None,
+            resampler=resampler if resampler is not None else "linear",
         )
         if isinstance(reference, PreparedVoice):
             self._validate_voice(reference)
@@ -188,16 +196,32 @@ class SoproRuntime:
             raise
         except Exception as exc:
             raise ModelInferenceError("Sopro reference preparation failed") from exc
+
+        prepared_metadata: dict[str, int | float] = {
+            "reference_sample_rate": reference.source_sample_rate,
+            "prepared_reference_sample_rate": reference.sample_rate,
+        }
+        extract_reference_level = getattr(self._engine, "reference_level_db", None)
+        if callable(extract_reference_level):
+            level = extract_reference_level(state)
+            if isinstance(level, Real) and not isinstance(level, bool):
+                try:
+                    finite_level = float(level)
+                except (OverflowError, TypeError, ValueError):
+                    pass
+                else:
+                    if math.isfinite(finite_level):
+                        prepared_metadata["reference_level_db"] = finite_level
         return PreparedVoice(
             state=state,
-            sample_rate=reference.sample_rate,
+            sample_rate=self.sample_rate,
             source=reference.source,
             model_id=self.model_id,
             source_revision=self.source_revision,
             backend=self.backend,
             runtime_fingerprint=self._runtime_fingerprint,
-            fingerprint=fingerprint_audio(reference.audio, reference.sample_rate),
-            metadata={"reference_sample_rate": reference.sample_rate},
+            fingerprint=reference.source_fingerprint,
+            metadata=prepared_metadata,
             _owner_id=id(self),
         )
 
@@ -253,28 +277,96 @@ class SoproRuntime:
         voice: PreparedVoice,
         config: GenerationConfig | None = None,
         voice_level: VoiceLevelConfig | None = None,
+        output: SoproOutputConfig | None = None,
     ) -> SynthesisResult:
         self._ensure_open()
         self._validate_request(request)
         if config is not None and not isinstance(config, GenerationConfig):
             raise InvalidGenerationConfigError("config must be a GenerationConfig")
         selected_config = config if config is not None else GenerationConfig()
+        if output is not None and not isinstance(output, SoproOutputConfig):
+            raise InvalidGenerationConfigError("output must be a SoproOutputConfig")
+        selected_output = output if output is not None else SoproOutputConfig()
         if voice_level is not None and not isinstance(voice_level, VoiceLevelConfig):
             raise InvalidGenerationConfigError("voice_level must be a VoiceLevelConfig")
         selected_voice_level = voice_level if voice_level is not None else VoiceLevelConfig()
         self._validate_voice(voice)
 
+        max_segment_chars = getattr(self._engine, "max_segment_chars", DEFAULT_MAX_SEGMENT_CHARS)
+        if max_segment_chars is None:
+            max_segment_chars = DEFAULT_MAX_SEGMENT_CHARS
+        if type(max_segment_chars) is not int or max_segment_chars < 1:
+            raise RuntimeCapabilityError("ONNXVoice must expose a positive Sopro max_segment_chars")
+        text_segments = split_text(request.text, max_segment_chars)
+        if not text_segments:
+            raise EmptyTextError("text must not be empty or whitespace-only")
+
+        segment_infer = getattr(self._engine, "synthesize_segment", None)
+        if len(text_segments) > 1 and not callable(segment_infer):
+            raise RuntimeCapabilityError(
+                "Long-text Sopro synthesis requires ONNXVoice semantic prompt carry; "
+                "upgrade ONNXVoice to a version exposing the segment inference contract"
+            )
+
+        raw_reference_level = voice.metadata.get("reference_level_db")
+        reference_level_db: float | None = None
+        if isinstance(raw_reference_level, Real) and not isinstance(raw_reference_level, bool):
+            try:
+                candidate_level = float(raw_reference_level)
+            except (OverflowError, TypeError, ValueError):
+                candidate_level = float("nan")
+            if math.isfinite(candidate_level):
+                reference_level_db = candidate_level
+        if selected_output.mode == "native" and reference_level_db is None:
+            raise RuntimeCapabilityError(
+                "Native Sopro output requires finite prepared reference_level_db metadata"
+            )
+
         kwargs: dict[str, Any] = selected_config.as_inference_kwargs()
         if request.language not in (None, "auto"):
             kwargs["lang"] = request.language
         kwargs["ref"] = voice.state
-        try:
-            raw_audio = self._engine.synthesize(request.text, **kwargs)
-        except SoproSynthError:
-            raise
-        except Exception as exc:
-            raise ModelInferenceError("Sopro synthesis failed") from exc
-        audio = _to_numpy(raw_audio)
+
+        segment_audio: list[np.ndarray] = []
+        carry: tuple[int, ...] | None = None
+        for index, text_segment in enumerate(text_segments):
+            segment_kwargs = dict(kwargs)
+            if carry is not None:
+                segment_kwargs["prompt_tokens"] = carry
+            try:
+                if callable(segment_infer):
+                    inferred = segment_infer(text_segment, **segment_kwargs)
+                    raw_audio, semantic_tokens, prompt_limit = _segment_result_parts(inferred)
+                else:
+                    raw_audio = self._engine.synthesize(text_segment, **segment_kwargs)
+                    semantic_tokens = None
+                    prompt_limit = None
+                segment_audio.append(_to_numpy(raw_audio))
+            except SoproSynthError:
+                raise
+            except Exception as exc:
+                raise ModelInferenceError("Sopro synthesis failed") from exc
+
+            if index + 1 < len(text_segments):
+                if semantic_tokens is None or prompt_limit is None:
+                    raise RuntimeCapabilityError(
+                        "Long-text Sopro synthesis requires ONNXVoice generated semantic tokens "
+                        "and prompt_token_limit metadata; upgrade ONNXVoice"
+                    )
+                if semantic_tokens and prompt_limit > 0:
+                    carry = tuple(semantic_tokens[-prompt_limit:])
+
+        empty_audio_samples = (
+            getattr(self._engine, "token_samples", 1024) if selected_output.mode == "native" else 0
+        )
+        audio, sopro_output_metadata = condition_sopro_output(
+            segment_audio,
+            sample_rate=self.sample_rate,
+            mode=selected_output.mode,
+            reference_level_db=reference_level_db,
+            empty_audio_samples=empty_audio_samples,
+        )
+        sopro_output_metadata["text_segment_count"] = len(text_segments)
         from .calibration import apply_voice_level_calibration, load_calibration_catalog
 
         calibration_catalog = (
@@ -320,6 +412,8 @@ class SoproRuntime:
                 "voice_identity": dict(voice.identity),
                 "language": request.language or "auto",
                 "generation_config": asdict(selected_config),
+                "sopro_output_config": asdict(selected_output),
+                "sopro_output": sopro_output_metadata,
                 "effective_generation": None,
                 "voice_level_config": asdict(selected_voice_level),
                 "voice_level_application": asdict(voice_level_application),
@@ -337,13 +431,16 @@ class SoproRuntime:
         language: str | None = None,
         config: GenerationConfig | None = None,
         voice_level: VoiceLevelConfig | None = None,
+        output: SoproOutputConfig | None = None,
     ) -> SynthesisResult:
         self._ensure_open()
         request = SynthesisRequest(id=id, text=text, language=language)
         if not request.text.strip():
             raise EmptyTextError("text must not be empty or whitespace-only")
         prepared = voice if isinstance(voice, PreparedVoice) else self.prepare_voice(voice)
-        return self.synthesize(request, voice=prepared, config=config, voice_level=voice_level)
+        return self.synthesize(
+            request, voice=prepared, config=config, voice_level=voice_level, output=output
+        )
 
     @property
     def capabilities(self) -> RuntimeCapabilities:
@@ -388,6 +485,51 @@ def _to_numpy(value: Any) -> np.ndarray:
     if hasattr(value, "detach"):
         value = value.detach().cpu().numpy()
     try:
-        return np.asarray(value, dtype=np.float32)
+        audio = np.asarray(value, dtype=np.float32)
     except (TypeError, ValueError, OverflowError) as exc:
         raise ModelInferenceError("Backend returned an invalid audio value") from exc
+    if audio.ndim != 1 or not np.isfinite(audio).all():
+        raise ModelInferenceError("Backend returned invalid mono audio")
+    return np.ascontiguousarray(audio)
+
+
+def _segment_result_parts(result: Any) -> tuple[Any, tuple[int, ...] | None, int | None]:
+    raw_audio = getattr(result, "audio", result)
+    semantic_tokens = getattr(result, "semantic_tokens", None)
+    prompt_limit = getattr(result, "prompt_token_limit", None)
+    metadata = getattr(result, "metadata", None)
+    if isinstance(metadata, Mapping):
+        if semantic_tokens is None:
+            semantic_tokens = metadata.get("generated_semantic_tokens")
+        if prompt_limit is None:
+            prompt_limit = metadata.get("prompt_token_limit")
+
+    if semantic_tokens is not None:
+        if isinstance(semantic_tokens, np.ndarray):
+            if semantic_tokens.ndim != 1:
+                raise RuntimeCapabilityError(
+                    "ONNXVoice generated semantic tokens must be one-dimensional"
+                )
+            semantic_tokens = semantic_tokens.tolist()
+        if isinstance(semantic_tokens, (str, bytes)) or not isinstance(semantic_tokens, Sequence):
+            raise RuntimeCapabilityError("ONNXVoice generated semantic tokens must be a sequence")
+        if any(
+            isinstance(token, (bool, np.bool_)) or not isinstance(token, Integral) or token < 0
+            for token in semantic_tokens
+        ):
+            raise RuntimeCapabilityError(
+                "ONNXVoice generated semantic tokens must be non-negative integers"
+            )
+        semantic_tokens = tuple(int(token) for token in semantic_tokens)
+
+    if prompt_limit is not None:
+        if (
+            isinstance(prompt_limit, (bool, np.bool_))
+            or not isinstance(prompt_limit, Integral)
+            or prompt_limit < 0
+        ):
+            raise RuntimeCapabilityError(
+                "ONNXVoice prompt_token_limit must be a non-negative integer"
+            )
+        prompt_limit = int(prompt_limit)
+    return raw_audio, semantic_tokens, prompt_limit

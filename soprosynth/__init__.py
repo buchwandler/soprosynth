@@ -14,6 +14,8 @@ from .api import SoproRuntime
 from .api_contract import REQUEST_API_VERSION, RequestApiContract, request_api_contract
 from .config import (
     GenerationConfig,
+    SoproOutputConfig,
+    SoproOutputMode,
     VoiceLevelApplication,
     VoiceLevelConfig,
     VoiceLevelMode,
@@ -79,6 +81,8 @@ __all__ = [
     "RuntimeClosedError",
     "RuntimeDiagnostics",
     "SessionCreationError",
+    "SoproOutputConfig",
+    "SoproOutputMode",
     "SoproRuntime",
     "SoproSynthError",
     "SynthesisRequest",

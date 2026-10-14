@@ -115,7 +115,7 @@ def test_calibration_builder_import_error_is_actionable(monkeypatch):
     import sys
 
     monkeypatch.setitem(sys.modules, "audiosig", None)
-    with pytest.raises(OptionalDependencyError, match=r"soprosynth\[audio\]"):
+    with pytest.raises(OptionalDependencyError, match=r"declared AudioSig dependency"):
         measure_audio_files(["not-read-without-audiosig.wav"])
 
 

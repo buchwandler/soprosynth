@@ -10,6 +10,8 @@ import soprosynth
 required = (
     "REQUEST_API_VERSION",
     "RequestApiContract",
+    "SoproOutputConfig",
+    "SoproOutputMode",
     "RuntimeCapabilities",
     "request_api_contract",
     "SynthesisRequest",
@@ -27,6 +29,8 @@ assert soprosynth.REQUEST_API_VERSION == 1
 contract = soprosynth.request_api_contract()
 assert contract.version == 1
 assert contract.supports_streaming is False
+assert contract.supports_sopro_output_policy is True
+assert contract.caller_owns_text_boundaries is False
 capabilities = soprosynth.SoproRuntime(object()).capabilities
 assert capabilities.backend == "onnx"
 assert capabilities.supports_streaming is False

@@ -73,6 +73,20 @@ class GenerationConfig:
         }
 
 
+SoproOutputMode = Literal["native", "raw"]
+
+
+@dataclass(frozen=True, slots=True)
+class SoproOutputConfig:
+    """Select native-compatible Sopro conditioning or unmodified ONNX audio."""
+
+    mode: SoproOutputMode = "native"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.mode, str) or self.mode not in ("native", "raw"):
+            raise InvalidGenerationConfigError("Sopro output mode must be 'native' or 'raw'")
+
+
 @dataclass(frozen=True, slots=True)
 class VoiceLevelConfig:
     """Opt-in static gain policy; no waveform analysis is performed."""

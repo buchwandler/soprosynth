@@ -161,6 +161,9 @@ class _FakeEngine:
     def prepare_reference(self, reference):
         return {"prepared": True}
 
+    def reference_level_db(self, state):
+        return -23.0
+
     def synthesize(self, text, **kwargs):
         return np.array([0.75, -0.75], dtype=np.float32)
 

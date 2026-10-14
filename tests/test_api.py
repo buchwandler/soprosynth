@@ -20,6 +20,7 @@ from soprosynth.errors import (
     InvalidVoiceError,
     RuntimeClosedError,
 )
+from soprosynth.voice import fingerprint_audio
 
 
 def test_validation():
@@ -65,6 +66,9 @@ class FakeEngine:
     def prepare_reference(self, reference):
         self.prepared.append(reference)
         return {"voice": len(self.prepared)}
+
+    def reference_level_db(self, state):
+        return -23.0
 
     def measure_text(self, text, language=None):
         self.measured.append((text, language))
@@ -125,6 +129,53 @@ def test_from_pretrained_routes_to_onnxvoice_with_canonical_defaults(monkeypatch
     assert engine.closed
     with pytest.raises(RuntimeClosedError):
         runtime.prepare_voice((np.array([0.1], dtype=np.float32), 24000))
+
+
+@pytest.mark.parametrize("sample_rate", [16000, 44100, 48000])
+def test_prepare_voice_preserves_source_rate_and_runtime_identity(sample_rate):
+    engine = FakeEngine()
+    runtime = SoproRuntime(engine)
+    audio = np.array([0.1, -0.1], dtype=np.float32)
+
+    voice = runtime.prepare_voice((audio, sample_rate))
+    reference = engine.prepared[0]
+
+    assert reference.sample_rate == sample_rate
+    assert reference.audio.dtype == np.float32 and reference.audio.flags.c_contiguous
+    assert np.array_equal(reference.audio, audio)
+    assert voice.sample_rate == runtime.sample_rate == 24000
+    assert voice.identity["sample_rate"] == 24000
+    assert voice.fingerprint == fingerprint_audio(audio, sample_rate)
+    assert voice.metadata == {
+        "reference_sample_rate": sample_rate,
+        "prepared_reference_sample_rate": sample_rate,
+        "reference_level_db": -23.0,
+    }
+    result = runtime.synthesize(
+        SynthesisRequest("source-rate", "hello", language="de"), voice=voice
+    )
+    assert result.sample_rate == 24000
+    runtime.close()
+
+
+def test_explicit_legacy_resampling_preserves_source_identity():
+    engine = FakeEngine()
+    runtime = SoproRuntime(engine)
+    audio = np.array([0.1, -0.1, 0.25, -0.25, 0.4, -0.4, 0.5, -0.5], dtype=np.float32)
+
+    voice = runtime.prepare_voice((audio, 48000), resampler="linear")
+    reference = engine.prepared[0]
+
+    assert reference.sample_rate == 24000
+    assert reference.audio.size == 4
+    assert voice.sample_rate == 24000
+    assert voice.fingerprint == fingerprint_audio(audio, 48000)
+    assert voice.metadata == {
+        "reference_sample_rate": 48000,
+        "prepared_reference_sample_rate": 24000,
+        "reference_level_db": -23.0,
+    }
+    runtime.close()
 
 
 def test_public_api_has_only_onnxvoice_runtime_controls():

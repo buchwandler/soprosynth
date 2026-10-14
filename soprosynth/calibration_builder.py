@@ -171,14 +171,14 @@ def build_calibration_record(
 def measure_audio_files(
     paths: Sequence[str | Path],
 ) -> tuple[list[float], list[float], list[float], list[int], list[float], list[str], str]:
-    """Measure licensed PCM WAVs with audiosig, importing the optional extra lazily."""
+    """Measure licensed PCM WAVs with audiosig, importing the required dependency lazily."""
     if len(paths) == 0:
         raise ValueError("at least one licensed PCM WAV is required")
     try:
         import audiosig
     except ImportError as exc:
         raise OptionalDependencyError(
-            "Measured calibration requires audiosig; install 'soprosynth[audio]'"
+            "Measured calibration requires the declared AudioSig dependency (>=0.1.8,<0.2)"
         ) from exc
 
     loudnesses: list[float] = []

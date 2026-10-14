@@ -16,6 +16,8 @@ def test_info_reports_contract_and_runtime_identity_without_model(monkeypatch, c
     assert payload["version"] == __version__
     assert payload["api"]["version"] == 1
     assert payload["api"]["supports_request_measurement"] is True
+    assert payload["api"]["supports_sopro_output_policy"] is True
+    assert payload["api"]["caller_owns_text_boundaries"] is False
     assert payload["api"]["supports_streaming"] is False
     assert payload["runtime"] == identity
 
@@ -43,7 +45,8 @@ def test_speak_routes_canonical_runtime_options_and_voice_level(monkeypatch, cap
     class FakeResult:
         def __init__(self):
             self.metadata = {
-                "voice_level_application": {"mode": "calibrated", "source": "override"}
+                "voice_level_application": {"mode": "calibrated", "source": "override"},
+                "sopro_output": {"mode": "raw", "gain_db": None},
             }
 
         def save_wav(self, path):
@@ -78,6 +81,8 @@ def test_speak_routes_canonical_runtime_options_and_voice_level(monkeypatch, cap
                 "hello.wav",
                 "--language",
                 "de",
+                "--output-mode",
+                "raw",
                 "--top-k",
                 "8",
                 "--max-seconds",
@@ -103,12 +108,14 @@ def test_speak_routes_canonical_runtime_options_and_voice_level(monkeypatch, cap
     assert synthesis["language"] == "de"
     assert synthesis["config"].top_k == 8
     assert synthesis["config"].max_seconds == pytest.approx(4.5)
+    assert synthesis["output"].mode == "raw"
     assert synthesis["voice_level"].mode == "calibrated"
     assert synthesis["voice_level"].gain_db == pytest.approx(2.0)
     assert calls["saved"] == "hello.wav"
     output = capsys.readouterr().out
     assert "hello.wav" in output
     assert '"source": "override"' in output
+    assert '"sopro_output"' in output and '"mode": "raw"' in output
 
 
 def test_cli_has_no_backend_switch_and_uses_cpu_profile_defaults(capsys):
@@ -117,11 +124,14 @@ def test_cli_has_no_backend_switch_and_uses_cpu_profile_defaults(capsys):
     assert args.model == "sopro:v2-turbo"
     assert args.profile == "wasm-uint8"
     assert args.provider == "cpu"
+    assert args.output_mode == "native"
 
     with pytest.raises(SystemExit) as error:
         cli.main(["speak", "--help"])
     assert error.value.code == 0
-    assert "--backend" not in capsys.readouterr().out
+    help_output = capsys.readouterr().out
+    assert "--backend" not in help_output
+    assert "--output-mode" in help_output
 
 
 def test_gain_override_requires_calibrated_mode(monkeypatch):

@@ -8,7 +8,7 @@ class SoproSynthError(Exception):
 
 
 class OptionalDependencyError(SoproSynthError):
-    """An optional dependency is not installed."""
+    """A declared optional or core dependency is not installed."""
 
 
 class InvalidRequestError(SoproSynthError):

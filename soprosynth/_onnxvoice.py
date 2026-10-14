@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import importlib
 import json
+import math
 import posixpath
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from numbers import Integral, Real
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Any
@@ -41,6 +44,13 @@ _PROGRESS_FIELDS = (
     "role",
     "target",
 )
+
+
+@dataclass(frozen=True, slots=True)
+class SoproSegmentResult:
+    audio: np.ndarray
+    semantic_tokens: tuple[int, ...] | None
+    prompt_token_limit: int | None
 
 
 def normalize_ref(ref: str) -> str:
@@ -401,11 +411,50 @@ class OnnxVoiceBackend:
             or installation_metadata.get("source_revision")
         )
 
+    @property
+    def max_segment_chars(self) -> int:
+        """Return the bundle's segment limit, using Sopro's upstream default."""
+        manifest = getattr(self._engine, "manifest", {}) or {}
+        config = manifest.get("config") if isinstance(manifest, Mapping) else None
+        generation = config.get("generation") if isinstance(config, Mapping) else None
+        value = generation.get("max_segment_chars") if isinstance(generation, Mapping) else None
+        if value is None:
+            return 300
+        if type(value) is not int or value < 1:
+            raise UnsupportedBundleError("Sopro max_segment_chars must be a positive integer")
+        return value
+
+    @property
+    def token_samples(self) -> int:
+        """Return the configured semantic-token audio span for empty output fallback."""
+        manifest = getattr(self._engine, "manifest", {}) or {}
+        value = manifest.get("tokenSamples") if isinstance(manifest, Mapping) else None
+        if value is None:
+            return 1024
+        if type(value) is not int or value < 1:
+            raise UnsupportedBundleError("Sopro tokenSamples must be a positive integer")
+        return value
+
     def prepare_reference(self, reference: ReferenceAudio) -> Any:
         try:
             return self._engine.prepare_voice(reference.audio, sample_rate=reference.sample_rate)
         except Exception as exc:
             raise _map_backend_error(exc, "prepare") from exc
+
+    @staticmethod
+    def reference_level_db(state: Any) -> float | None:
+        """Return only a finite scalar level from an ONNXVoice reference state."""
+        if isinstance(state, Mapping):
+            value = state.get("level_db")
+        else:
+            value = getattr(state, "level_db", None)
+        if isinstance(value, bool) or not isinstance(value, Real):
+            return None
+        try:
+            level_db = float(value)
+        except (OverflowError, TypeError, ValueError):
+            return None
+        return level_db if math.isfinite(level_db) else None
 
     def measure_text(self, text: str, language: str | None = None) -> int:
         try:
@@ -430,6 +479,86 @@ class OnnxVoiceBackend:
         except Exception as exc:
             raise _map_backend_error(exc, "inference") from exc
         return result.audio
+
+    def synthesize_segment(self, text: str, **kwargs: Any) -> SoproSegmentResult:
+        """Infer one text segment and expose the optional semantic-carry contract."""
+        state = kwargs.pop("ref", None)
+        language = kwargs.pop("lang", None)
+        prompt_tokens = kwargs.pop("prompt_tokens", None)
+        if state is None:
+            raise InvalidVoiceError("ONNX Sopro synthesis requires a prepared reference voice")
+        try:
+            text_input = self._engine.prepare_text(text, language=language)
+            infer_kwargs = dict(kwargs)
+            if prompt_tokens is not None:
+                infer_kwargs["prompt_tokens"] = prompt_tokens
+            result = self._engine.infer(
+                text_input.token_ids,
+                voice_state=state,
+                language=text_input.language,
+                **infer_kwargs,
+            )
+        except Exception as exc:
+            mapped = _map_backend_error(exc, "inference")
+            unsupported_override = isinstance(mapped, RuntimeCapabilityError) or (
+                isinstance(exc, TypeError) and "prompt_tokens" in str(exc)
+            )
+            if prompt_tokens is not None and unsupported_override:
+                raise RuntimeCapabilityError(
+                    "The installed ONNXVoice runtime does not support Sopro semantic prompt carry; "
+                    "upgrade ONNXVoice to a version exposing prompt_tokens inference"
+                ) from exc
+            raise mapped from exc
+
+        try:
+            audio = np.asarray(result.audio, dtype=np.float32)
+        except (AttributeError, TypeError, ValueError, OverflowError) as exc:
+            raise ModelInferenceError("ONNXVoice returned invalid Sopro segment audio") from exc
+        if audio.ndim != 1 or not np.isfinite(audio).all():
+            raise ModelInferenceError("ONNXVoice returned invalid mono Sopro segment audio")
+
+        metadata = getattr(result, "metadata", {})
+        if not isinstance(metadata, Mapping):
+            metadata = {}
+        semantic_tokens: tuple[int, ...] | None = None
+        raw_tokens = metadata.get("generated_semantic_tokens")
+        if raw_tokens is not None:
+            if isinstance(raw_tokens, np.ndarray):
+                if raw_tokens.ndim != 1:
+                    raise RuntimeCapabilityError(
+                        "ONNXVoice generated_semantic_tokens must be one-dimensional"
+                    )
+                raw_tokens = raw_tokens.tolist()
+            if isinstance(raw_tokens, (str, bytes)) or not isinstance(raw_tokens, Sequence):
+                raise RuntimeCapabilityError(
+                    "ONNXVoice generated_semantic_tokens must be an integer sequence"
+                )
+            if any(
+                isinstance(token, (bool, np.bool_)) or not isinstance(token, Integral) or token < 0
+                for token in raw_tokens
+            ):
+                raise RuntimeCapabilityError(
+                    "ONNXVoice generated_semantic_tokens must contain non-negative integers"
+                )
+            semantic_tokens = tuple(int(token) for token in raw_tokens)
+
+        prompt_limit: int | None = None
+        raw_limit = metadata.get("prompt_token_limit")
+        if raw_limit is not None:
+            if (
+                isinstance(raw_limit, (bool, np.bool_))
+                or not isinstance(raw_limit, Integral)
+                or raw_limit < 0
+            ):
+                raise RuntimeCapabilityError(
+                    "ONNXVoice prompt_token_limit must be a non-negative integer"
+                )
+            prompt_limit = int(raw_limit)
+        return SoproSegmentResult(
+            audio=np.ascontiguousarray(audio),
+            semantic_tokens=semantic_tokens,
+            prompt_token_limit=prompt_limit,
+        )
 
     def diagnostics(self) -> PublicRuntimeDiagnostics:
         try:

@@ -18,6 +18,8 @@ from .types import PreparedVoice
 class ReferenceAudio:
     audio: np.ndarray
     sample_rate: int
+    source_sample_rate: int
+    source_fingerprint: str
     source: str | None = None
 
 
@@ -34,7 +36,7 @@ def _resample_audio(
         from audiosig import resample
     except ImportError as exc:
         raise OptionalDependencyError(
-            "Anti-aliased reference resampling requires audiosig; install 'soprosynth[audio]'"
+            "Anti-aliased reference resampling requires the declared AudioSig dependency (>=0.1.8,<0.2)"
         ) from exc
     result = resample(audio, source_rate=source_rate, target_rate=target_rate)
     return np.ascontiguousarray(result, dtype=np.float32)
@@ -114,7 +116,15 @@ def load_reference_audio(
         )
     if type(sample_rate) is not int or sample_rate <= 0:
         raise InvalidVoiceError("reference sample rate must be a positive integer")
+    source_sample_rate = sample_rate
+    source_fingerprint = fingerprint_audio(audio, source_sample_rate)
     if expected_sample_rate is not None and sample_rate != expected_sample_rate:
         audio = _resample_audio(audio, sample_rate, expected_sample_rate, method=resampler)
         sample_rate = expected_sample_rate
-    return ReferenceAudio(audio=audio, sample_rate=sample_rate, source=source_path)
+    return ReferenceAudio(
+        audio=audio,
+        sample_rate=sample_rate,
+        source_sample_rate=source_sample_rate,
+        source_fingerprint=source_fingerprint,
+        source=source_path,
+    )

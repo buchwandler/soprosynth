@@ -25,6 +25,8 @@ def test_load_path_tuple_resampling_and_audio_identity(tmp_path):
     loaded = load_reference_audio(path, expected_sample_rate=24000)
     assert loaded.source == str(path.resolve())
     assert loaded.sample_rate == 24000
+    assert loaded.source_sample_rate == 24000
+    assert loaded.source_fingerprint == fingerprint_audio(loaded.audio, 24000)
     assert loaded.audio.dtype == np.float32
     assert fingerprint_audio(loaded.audio, loaded.sample_rate) == fingerprint_audio(
         loaded.audio.copy(), loaded.sample_rate
@@ -32,11 +34,15 @@ def test_load_path_tuple_resampling_and_audio_identity(tmp_path):
 
     resampled = load_reference_audio(path, expected_sample_rate=48000)
     assert resampled.sample_rate == 48000
+    assert resampled.source_sample_rate == 24000
+    assert resampled.source_fingerprint == loaded.source_fingerprint
     assert resampled.audio.size == 6
 
     tuple_audio = load_reference_audio((np.array([[0.0, 1.0], [1.0, 1.0]]), 24000))
     assert tuple_audio.source is None
     assert tuple_audio.audio.tolist() == pytest.approx([0.5, 1.0])
+    assert tuple_audio.source_sample_rate == 24000
+    assert tuple_audio.source_fingerprint == fingerprint_audio(tuple_audio.audio, 24000)
 
 
 def test_prepared_voice_is_returned_for_runtime_compatibility_check():
@@ -89,9 +95,9 @@ def test_audiosig_resampling_is_opt_in_anti_aliased_and_rate_correct():
     assert np.sqrt(np.mean(loaded.audio[256:-256] ** 2)) < 0.01
 
 
-def test_audiosig_resampling_missing_extra_has_actionable_error(monkeypatch):
+def test_audiosig_resampling_missing_dependency_has_actionable_error(monkeypatch):
     monkeypatch.setitem(sys.modules, "audiosig", None)
-    with pytest.raises(OptionalDependencyError, match=r"soprosynth\[audio\]"):
+    with pytest.raises(OptionalDependencyError, match=r"declared AudioSig dependency"):
         load_reference_audio(
             (np.ones(8, dtype=np.float32), 48000),
             expected_sample_rate=24000,

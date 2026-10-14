@@ -15,9 +15,13 @@ provider: CPUExecutionProvider (cpu)
 languages: en, pt, fr, de, auto
 output: mono float32 PCM at 24 kHz
 reference voice: required
+output mode: native-compatible conditioning by default; raw is opt-in
+reference samples: forwarded at their original rate by default
+model-quality claim: `wasm-uint8` is quantized; no native-PyTorch parity claim
 streaming: not supported
 ```
 
+SoproSynth has no runtime dependency on the native `sopro` Python package. It segments long text and carries semantic tokens between segments when the installed ONNXVoice runtime exposes that contract. The `native` output name describes DSP conditioning only; it does not describe the model's quality tier.
 Use only reference recordings whose rights and license permit your intended use. SoproSynth does not grant rights to recordings or generated speech.
 
 ## Synthesis examples

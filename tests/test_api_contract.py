@@ -20,7 +20,8 @@ def test_v1_request_contract():
     assert contract.measurement_method == "measure_request"
     assert contract.discovery_method == "discover_bundles"
     assert contract.runtime_identity_method == "runtime_identity"
-    assert contract.caller_owns_text_boundaries is True
+    assert contract.caller_owns_text_boundaries is False
+    assert contract.supports_sopro_output_policy is True
     assert contract.supports_reference_voice is True
     assert contract.supports_request_measurement is True
     assert contract.supports_streaming is False

@@ -15,7 +15,8 @@ from soprosynth import (
     SynthesisRequest,
     UnsupportedBundleError,
 )
-from soprosynth._onnxvoice import normalize_ref
+from soprosynth._onnxvoice import OnnxVoiceBackend, normalize_ref
+from soprosynth.config import SoproOutputConfig
 
 
 class FakeEngine:
@@ -30,17 +31,21 @@ class FakeEngine:
         )
         self.infer_args: tuple[tuple[int, ...], dict[str, Any]] | None = None
         self.closed = False
+        self.reference_level = -21.25
+        self.infer_metadata = {}
 
     def prepare_voice(self, waveform, sample_rate):
         assert sample_rate == 24000
-        return {"reference_samples": len(waveform)}
+        return {"reference_samples": len(waveform), "level_db": self.reference_level}
 
     def prepare_text(self, text, language=None):
         return SimpleNamespace(token_ids=(11, 12), language=language)
 
     def infer(self, token_ids, **kwargs):
         self.infer_args = (tuple(token_ids), kwargs)
-        return SimpleNamespace(audio=np.array([0.1, -0.1], dtype=np.float32))
+        return SimpleNamespace(
+            audio=np.array([0.1, -0.1], dtype=np.float32), metadata=self.infer_metadata
+        )
 
     def diagnostics(self):
         session = SimpleNamespace(
@@ -99,11 +104,16 @@ def test_managed_runtime_uses_onnxvoice_and_public_api(monkeypatch):
     assert manager.open_args[1]["provider_options"]["CPUExecutionProvider"]
 
     voice = runtime.prepare_voice((np.array([0.1, -0.1], dtype=np.float32), 24000))
-    result = runtime.synthesize(SynthesisRequest("req-1", "Hello", language="en"), voice=voice)
+    assert voice.metadata["reference_level_db"] == -21.25
+    result = runtime.synthesize(
+        SynthesisRequest("req-1", "Hello", language="en"),
+        voice=voice,
+        output=SoproOutputConfig(mode="raw"),
+    )
     assert result.audio.tolist() == pytest.approx([0.1, -0.1])
     assert engine.infer_args is not None
     assert engine.infer_args[0] == (11, 12)
-    assert engine.infer_args[1]["voice_state"] == {"reference_samples": 2}
+    assert engine.infer_args[1]["voice_state"] == {"reference_samples": 2, "level_db": -21.25}
     assert engine.infer_args[1]["language"] == "en"
     measured = runtime.measure_request(
         SynthesisRequest("measure", "Hello", language="en"), maximum=2
@@ -112,6 +122,74 @@ def test_managed_runtime_uses_onnxvoice_and_public_api(monkeypatch):
     assert runtime.diagnostics.providers_active == ("CPUExecutionProvider",)
     runtime.close()
     assert engine.closed
+
+
+def test_sopro_segment_adapter_forwards_prompt_and_reads_semantic_metadata():
+    engine = FakeEngine()
+    engine.infer_metadata = {
+        "generated_semantic_tokens": (2, 3, 4),
+        "prompt_token_limit": 2,
+    }
+    backend = OnnxVoiceBackend(engine, profile="wasm-uint8", requested_providers="cpu")
+
+    result = backend.synthesize_segment(
+        "Hello",
+        ref={"voice": 1},
+        lang="en",
+        prompt_tokens=(8, 9),
+    )
+
+    assert result.semantic_tokens == (2, 3, 4)
+    assert result.prompt_token_limit == 2
+    assert result.audio.tolist() == pytest.approx([0.1, -0.1])
+    assert engine.infer_args is not None
+    assert engine.infer_args[1]["prompt_tokens"] == (8, 9)
+
+
+def test_sopro_segment_adapter_reports_legacy_prompt_override_failure():
+    class LegacyEngine(FakeEngine):
+        def infer(self, token_ids, **kwargs):
+            if "prompt_tokens" in kwargs:
+                raise TypeError("unexpected prompt_tokens")
+            return super().infer(token_ids, **kwargs)
+
+    backend = OnnxVoiceBackend(LegacyEngine(), profile="wasm-uint8", requested_providers="cpu")
+    with pytest.raises(RuntimeCapabilityError, match="upgrade ONNXVoice"):
+        backend.synthesize_segment("Second", ref={"voice": 1}, prompt_tokens=(8, 9))
+
+
+@pytest.mark.parametrize(
+    ("level", "expected"),
+    [
+        (-21.5, -21.5),
+        (np.float32(-18.25), -18.25),
+        (float("nan"), None),
+        (float("inf"), None),
+        (float("-inf"), None),
+        (True, None),
+        ("not-a-level", None),
+        ([1.0], None),
+        (None, None),
+    ],
+)
+def test_reference_level_extraction_only_accepts_finite_scalars(level, expected):
+    backend = OnnxVoiceBackend(FakeEngine(), profile="wasm-uint8", requested_providers="cpu")
+    assert backend.reference_level_db({"level_db": level}) == expected
+    assert backend.reference_level_db(SimpleNamespace(level_db=level)) == expected
+
+
+@pytest.mark.parametrize("level", [float("nan"), float("inf"), True, "bad", [1.0], None])
+def test_prepared_voice_excludes_invalid_reference_level_metadata(level):
+    engine = FakeEngine()
+    engine.reference_level = level
+    backend = OnnxVoiceBackend(engine, profile="wasm-uint8", requested_providers="cpu")
+    runtime = SoproRuntime(backend)
+
+    voice = runtime.prepare_voice((np.array([0.1, -0.1], dtype=np.float32), 24000))
+
+    assert "reference_level_db" not in voice.metadata
+    assert all(type(value) is int for value in voice.metadata.values())
+    runtime.close()
 
 
 def test_onnxvoice_capability_errors_are_mapped(monkeypatch):

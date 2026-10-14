@@ -11,7 +11,7 @@ from typing import Any
 
 from . import __version__, discover_bundles, request_api_contract, runtime_identity
 from .api import SoproRuntime
-from .config import GenerationConfig, VoiceLevelConfig
+from .config import GenerationConfig, SoproOutputConfig, VoiceLevelConfig
 
 
 def _json_value(value: Any) -> Any:
@@ -42,6 +42,8 @@ def _contract_summary() -> dict[str, Any]:
         "measurement_method": contract.measurement_method,
         "supports_reference_voice": contract.supports_reference_voice,
         "supports_voice_level": contract.supports_voice_level,
+        "supports_sopro_output_policy": contract.supports_sopro_output_policy,
+        "caller_owns_text_boundaries": contract.caller_owns_text_boundaries,
         "supports_request_measurement": contract.supports_request_measurement,
         "supports_streaming": contract.supports_streaming,
         "supports_word_timings": contract.supports_word_timings,
@@ -57,13 +59,19 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     speak = subparsers.add_parser("speak", help="synthesize speech")
-    speak.add_argument("text", help="text for one atomic synthesis request")
+    speak.add_argument("text", help="text to synthesize")
     speak.add_argument("--ref", required=True, help="reference voice WAV path")
     speak.add_argument("--out", default="out.wav", help="output mono PCM16 WAV path")
     speak.add_argument("--language", choices=("en", "pt", "fr", "de", "auto"))
     speak.add_argument("--model", default="sopro:v2-turbo")
     speak.add_argument("--profile", default="wasm-uint8")
     speak.add_argument("--provider", choices=("cpu",), default="cpu")
+    speak.add_argument(
+        "--output-mode",
+        choices=("native", "raw"),
+        default="native",
+        help="Sopro-compatible output conditioning or raw ONNX waveform",
+    )
     speak.add_argument("--temperature", type=float)
     speak.add_argument("--top-p", type=float)
     speak.add_argument("--top-k", type=int)
@@ -105,6 +113,7 @@ def _speak(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         min_seconds=args.min_seconds,
     )
     voice_level = VoiceLevelConfig(mode=args.voice_level, gain_db=args.gain_db)
+    output_config = SoproOutputConfig(mode=args.output_mode)
     with SoproRuntime.from_pretrained(
         model=args.model,
         profile=args.profile,
@@ -117,12 +126,16 @@ def _speak(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
             language=args.language,
             config=config,
             voice_level=voice_level,
+            output=output_config,
         )
-        output = result.save_wav(args.out)
-        print(output)
-        application = result.metadata.get("voice_level_application")
-        if application is not None:
-            _print_json({"voice_level_application": application})
+        output_path = result.save_wav(args.out)
+        print(output_path)
+        _print_json(
+            {
+                "sopro_output": result.metadata.get("sopro_output"),
+                "voice_level_application": result.metadata.get("voice_level_application"),
+            }
+        )
     return 0
 
 
