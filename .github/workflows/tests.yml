@@ -20,6 +20,10 @@ jobs:
       run: |
         python -m pip install -e ".[dev]"
         python -m compileall -q soprosynth tests
+    - name: Verify development environment
+      run: |
+        python -m pip check
+        python -c "import build, packaging, setuptools, setuptools_scm, wheel"
     - name: Tests
       run: pytest
   python314-public-api:

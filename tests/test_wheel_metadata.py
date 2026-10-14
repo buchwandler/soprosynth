@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.fixture(scope="module")
 def built_wheel(tmp_path_factory):
     output = tmp_path_factory.mktemp("wheel")
-    subprocess.run(
+    completed = subprocess.run(
         [
             sys.executable,
             "-m",
@@ -28,10 +28,17 @@ def built_wheel(tmp_path_factory):
             str(output),
         ],
         cwd=ROOT,
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
     )
+    if completed.returncode != 0:
+        pytest.fail(
+            "wheel build failed\n"
+            f"command: {completed.args!r}\n"
+            f"stdout:\n{completed.stdout}\n"
+            f"stderr:\n{completed.stderr}"
+        )
     wheels = list(output.glob("soprosynth-*.whl"))
     assert len(wheels) == 1
     return wheels[0]

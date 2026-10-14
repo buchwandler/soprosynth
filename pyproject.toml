@@ -14,7 +14,16 @@ keywords = ["sopro", "tts", "onnx", "onnxvoice"]
 
 [project.optional-dependencies]
 cpu = ["onnxvoice[cpu]>=0.2.7,<0.3"]
-dev = ["pytest>=8", "build>=1.2", "ruff>=0.8", "setuptools_scm>=8", "twine>=5"]
+dev = [
+    "pytest>=8",
+    "build>=1.2",
+    "packaging",
+    "ruff>=0.8",
+    "setuptools>=77",
+    "setuptools_scm[toml]>=8",
+    "wheel",
+    "twine>=5",
+]
 
 [project.scripts]
 soprosynth = "soprosynth.__main__:main"
