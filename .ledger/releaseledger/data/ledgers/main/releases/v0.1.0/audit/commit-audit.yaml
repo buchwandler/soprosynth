@@ -1,0 +1,519 @@
+schema_version: 1
+object_type: commit_audit_sheet
+versioning:
+  schema_version: 1
+  revision: 3
+release_version: v0.1.0
+git_base_ref: :root
+git_base_sha: 4b825dc642cb6eb9a060e54bf8d69288fbee4904
+git_head_ref: HEAD
+git_head_sha: dc92b04f5cd54eb39fd7ebb456cac4eeb1636281
+git_range: :root..dc92b04f5cd54eb39fd7ebb456cac4eeb1636281
+commit_count: 10
+rows:
+  - sha: b5a71a6cef62f007648bb941432bda44e22efe19
+    source_ref: git:b5a71a6cef62f007648bb941432bda44e22efe19
+    short_sha: b5a71a6
+    changed_paths: []
+    stats:
+      files_changed: 0
+      insertions: 0
+      deletions: 0
+    inspected: true
+    inspected_paths:
+      - .gitignore
+      - LICENSE
+      - README.md
+    observed_behavior:
+      Established repository ignore rules, licensing, and initial project
+      documentation; no shipped runtime behavior.
+    public_impact: none
+    decision: internal
+    stale: false
+    evidence_subject: Initial commit
+    target_entry_id: entry-0001
+    notes: Repository baseline only.
+  - sha: 3dd2d379996a762ed8ee4d6cd922c4c3446d016b
+    source_ref: git:3dd2d379996a762ed8ee4d6cd922c4c3446d016b
+    short_sha: 3dd2d37
+    changed_paths:
+      - .codecrate.toml
+      - .github/workflows/tests.yml
+      - .gitignore
+      - .ledger/ledger.toml
+      - .ledger/releaseledger/.ledger-project.toml
+      - .ledger/releaseledger/config.toml
+      - .ledger/releaseledger/data/.ledger-project.toml
+      - .ledger/taskledger/.ledger-project.toml
+      - .ledger/taskledger/config.toml
+      - .pre-commit-config.yaml
+      - README.md
+      - START_HERE.md
+      - examples/local_onnx_inspect.py
+      - examples/native_first_wav.py
+      - pyproject.toml
+      - soprosynth/__init__.py
+      - soprosynth/__main__.py
+      - soprosynth/api.py
+      - soprosynth/errors.py
+      - soprosynth/onnx.py
+      - soprosynth/py.typed
+      - tests/test_api.py
+      - tests/test_onnx.py
+    stats:
+      files_changed: 23
+      insertions: 1045
+      deletions: 1
+    inspected: true
+    inspected_paths:
+      - README.md
+      - pyproject.toml
+      - soprosynth/__init__.py
+      - soprosynth/__main__.py
+      - soprosynth/api.py
+      - soprosynth/onnx.py
+      - soprosynth/errors.py
+      - tests/test_api.py
+      - tests/test_onnx.py
+    observed_behavior:
+      Introduced the typed synthesis request/result surface, runtime
+      lifecycle, WAV output, CLI entry point, and local ONNX bundle adapter with validation
+      tests.
+    public_impact: public
+    decision: accepted
+    stale: false
+    evidence_subject: "feat: initial release"
+    target_entry_key: runtime
+    target_entry_id: entry-0002
+    notes:
+      Initial public runtime foundation; later backend changes are covered by the
+      same final runtime entry.
+  - sha: 7f0b08158c9ba51a4ca6ea705497b168532c1d58
+    source_ref: git:7f0b08158c9ba51a4ca6ea705497b168532c1d58
+    short_sha: 7f0b081
+    changed_paths:
+      - .github/workflows/publish.yml
+      - .github/workflows/tests.yml
+      - MANIFEST.in
+      - README.md
+      - examples/calibrated_voice_level.py
+      - examples/discovery.py
+      - examples/local_onnx_inspect.py
+      - examples/multilingual.py
+      - examples/native_first_wav.py
+      - examples/onnx_inspect.py
+      - examples/prepared_voice.py
+      - examples/quickstart.py
+      - examples/streaming.py
+      - examples/strict_request.py
+      - pyproject.toml
+      - scripts/check_pypi_name.py
+      - scripts/check_release_artifacts.py
+      - soprosynth/__init__.py
+      - soprosynth/__main__.py
+      - soprosynth/_native.py
+      - soprosynth/_onnxvoice.py
+      - soprosynth/api.py
+      - soprosynth/api_contract.py
+      - soprosynth/audio.py
+      - soprosynth/calibration.py
+      - soprosynth/config.py
+      - soprosynth/data/voice_level_calibration.json
+      - soprosynth/discovery.py
+      - soprosynth/errors.py
+      - soprosynth/onnx.py
+      - soprosynth/types.py
+      - soprosynth/voice.py
+      - tests/integration/test_real_native_sopro.py
+      - tests/integration/test_real_onnx_sopro.py
+      - tests/test_api.py
+      - tests/test_api_contract.py
+      - tests/test_audio.py
+      - tests/test_calibration.py
+      - tests/test_cli.py
+      - tests/test_config.py
+      - tests/test_discovery.py
+      - tests/test_native_boundary.py
+      - tests/test_onnx.py
+      - tests/test_package_boundary.py
+      - tests/test_release_checks.py
+      - tests/test_types.py
+      - tests/test_voice.py
+      - tests/wheel_api_smoke.py
+    stats:
+      files_changed: 48
+      insertions: 4210
+      deletions: 597
+    inspected: true
+    inspected_paths:
+      - README.md
+      - pyproject.toml
+      - soprosynth/__init__.py
+      - soprosynth/__main__.py
+      - soprosynth/_onnxvoice.py
+      - soprosynth/api.py
+      - soprosynth/config.py
+      - soprosynth/discovery.py
+      - soprosynth/types.py
+      - tests/test_api.py
+      - tests/test_cli.py
+      - tests/test_onnx.py
+    observed_behavior:
+      Expanded the public runtime around managed ONNXVoice assets,
+      backend diagnostics, prepared references, discovery, generation controls, CLI
+      options, and explicit capability boundaries.
+    public_impact: public
+    decision: accepted
+    stale: false
+    evidence_subject: "feat: use onnxvoice and prepare release"
+    target_entry_key: runtime
+    target_entry_id: entry-0002
+    notes:
+      Reviewed with subsequent removal of the native backend; final release prose
+      describes the resulting ONNXVoice runtime.
+  - sha: 7d03a5823d67d104a91a35c4a9d12260df95f3d3
+    source_ref: git:7d03a5823d67d104a91a35c4a9d12260df95f3d3
+    short_sha: 7d03a58
+    changed_paths:
+      - .github/workflows/publish.yml
+      - MANIFEST.in
+      - README.md
+      - examples/README.md
+      - examples/calibrated_voice_level.py
+      - examples/discovery.py
+      - examples/multilingual.py
+      - examples/onnx_inspect.py
+      - examples/prepared_voice.py
+      - examples/quickstart.py
+      - examples/streaming.py
+      - examples/strict_request.py
+      - pyproject.toml
+      - scripts/check_pypi_name.py
+      - scripts/check_release_artifacts.py
+      - soprosynth/__init__.py
+      - soprosynth/__main__.py
+      - soprosynth/api.py
+      - soprosynth/api_contract.py
+      - soprosynth/calibration.py
+      - soprosynth/calibration_builder.py
+      - soprosynth/config.py
+      - soprosynth/data/voice_level_calibration.json
+      - soprosynth/types.py
+      - soprosynth/voice.py
+      - tests/integration/test_real_native_sopro.py
+      - tests/integration/test_real_onnx_sopro.py
+      - tests/test_api_contract.py
+      - tests/test_calibration.py
+      - tests/test_calibration_builder.py
+      - tests/test_config.py
+      - tests/test_release_checks.py
+      - tests/test_voice.py
+      - tests/wheel_api_smoke.py
+    stats:
+      files_changed: 34
+      insertions: 1266
+      deletions: 96
+    inspected: true
+    inspected_paths:
+      - README.md
+      - pyproject.toml
+      - soprosynth/api.py
+      - soprosynth/calibration.py
+      - soprosynth/calibration_builder.py
+      - soprosynth/voice.py
+      - soprosynth/types.py
+      - tests/test_calibration.py
+      - tests/test_calibration_builder.py
+      - tests/test_voice.py
+    observed_behavior:
+      Added reviewable voice-level calibration records and a calibration
+      builder, explicit reference resampling choices, capability metadata, and release
+      artifact validation coverage.
+    public_impact: public
+    decision: accepted
+    stale: false
+    evidence_subject: "feat: prepare release"
+    target_entry_key: calibration
+    target_entry_id: entry-0003
+    notes:
+      Calibration catalog remains empty unless supplied with measured licensed
+      data.
+  - sha: caaa4925115d94838a63f1400b1afbdbe2e29859
+    source_ref: git:caaa4925115d94838a63f1400b1afbdbe2e29859
+    short_sha: caaa492
+    changed_paths:
+      - .github/workflows/codecov.yml
+      - .github/workflows/pre-commit.yml
+      - .github/workflows/python-publish.yml
+      - .github/workflows/tests.yml
+      - README.md
+      - scripts/check_release_artifacts.py
+      - soprosynth/api_contract.py
+      - soprosynth/calibration.py
+      - soprosynth/calibration_builder.py
+      - soprosynth/config.py
+      - soprosynth/types.py
+      - soprosynth/voice.py
+      - tests/integration/test_real_native_sopro.py
+      - tests/test_calibration.py
+      - tests/test_calibration_builder.py
+      - tests/test_release_checks.py
+      - tests/test_voice.py
+    stats:
+      files_changed: 17
+      insertions: 196
+      deletions: 107
+    inspected: true
+    inspected_paths:
+      - .github/workflows
+      - .pre-commit-config.yaml
+      - scripts/check_release_artifacts.py
+      - soprosynth/calibration.py
+      - soprosynth/config.py
+      - soprosynth/types.py
+      - soprosynth/voice.py
+      - tests
+    observed_behavior:
+      Hardened CI, pre-commit, calibration, configuration, and test
+      behavior without adding a distinct user-facing capability.
+    public_impact: internal
+    decision: internal
+    stale: false
+    evidence_subject: "chore: pre-commit and fix ci"
+    target_entry_id: entry-0006
+    notes: Internal quality and automation maintenance.
+  - sha: b9c7339c5563c716237c77bed1f798461c03a846
+    source_ref: git:b9c7339c5563c716237c77bed1f798461c03a846
+    short_sha: b9c7339
+    changed_paths:
+      - pyproject.toml
+    stats:
+      files_changed: 1
+      insertions: 1
+      deletions: 0
+    inspected: true
+    inspected_paths:
+      - pyproject.toml
+    observed_behavior:
+      Adjusted package configuration for repository path handling;
+      no distinct user-facing behavior.
+    public_impact: internal
+    decision: internal
+    stale: false
+    evidence_subject: "chore: fix path"
+    target_entry_id: entry-0006
+    notes: Packaging maintenance.
+  - sha: 7759148cd188f213f67d5ff5a4a0d059af898d93
+    source_ref: git:7759148cd188f213f67d5ff5a4a0d059af898d93
+    short_sha: "7759148"
+    changed_paths:
+      - README.md
+      - START_HERE.md
+      - examples/README.md
+      - examples/calibrated_voice_level.py
+      - examples/discovery.py
+      - examples/multilingual.py
+      - examples/onnx_inspect.py
+      - examples/prepared_voice.py
+      - examples/quickstart.py
+      - examples/streaming.py
+      - examples/strict_request.py
+      - pyproject.toml
+      - soprosynth/__init__.py
+      - soprosynth/__main__.py
+      - soprosynth/_native.py
+      - soprosynth/_onnxvoice.py
+      - soprosynth/api.py
+      - soprosynth/api_contract.py
+      - soprosynth/calibration.py
+      - soprosynth/calibration_builder.py
+      - soprosynth/config.py
+      - soprosynth/discovery.py
+      - soprosynth/errors.py
+      - soprosynth/types.py
+      - soprosynth/voice.py
+      - tests/integration/test_real_native_sopro.py
+      - tests/integration/test_real_onnx_sopro.py
+      - tests/test_api.py
+      - tests/test_api_contract.py
+      - tests/test_calibration.py
+      - tests/test_calibration_builder.py
+      - tests/test_cli.py
+      - tests/test_config.py
+      - tests/test_discovery.py
+      - tests/test_native_boundary.py
+      - tests/test_onnx.py
+      - tests/test_package_boundary.py
+      - tests/test_source_boundary.py
+      - tests/test_types.py
+      - tests/test_voice.py
+      - tests/test_wheel_metadata.py
+      - tests/wheel_api_smoke.py
+    stats:
+      files_changed: 42
+      insertions: 542
+      deletions: 1002
+    inspected: true
+    inspected_paths:
+      - README.md
+      - START_HERE.md
+      - pyproject.toml
+      - soprosynth/__init__.py
+      - soprosynth/__main__.py
+      - soprosynth/_onnxvoice.py
+      - soprosynth/api.py
+      - soprosynth/discovery.py
+      - soprosynth/types.py
+      - soprosynth/voice.py
+      - tests
+    observed_behavior:
+      Consolidated the shipped runtime on ONNXVoice, removed native
+      inference dependencies and APIs, and retained explicit discovery, inspection,
+      calibration identity, and capability-boundary behavior.
+    public_impact: public
+    decision: accepted
+    stale: false
+    evidence_subject: "feat: remove nativ3 sapro lib"
+    target_entry_key: runtime
+    target_entry_id: entry-0002
+    notes: Final backend boundary for this release.
+  - sha: a9de1907c4c825be8709fc97d2b9d039164f6038
+    source_ref: git:a9de1907c4c825be8709fc97d2b9d039164f6038
+    short_sha: a9de190
+    changed_paths:
+      - README.md
+      - examples/README.md
+      - pyproject.toml
+      - soprosynth/__init__.py
+      - soprosynth/__main__.py
+      - soprosynth/_onnxvoice.py
+      - soprosynth/api.py
+      - soprosynth/api_contract.py
+      - soprosynth/calibration_builder.py
+      - soprosynth/config.py
+      - soprosynth/errors.py
+      - soprosynth/postprocess.py
+      - soprosynth/voice.py
+      - tests/test_api.py
+      - tests/test_api_contract.py
+      - tests/test_calibration.py
+      - tests/test_calibration_builder.py
+      - tests/test_cli.py
+      - tests/test_onnx.py
+      - tests/test_postprocess.py
+      - tests/test_sopro_orchestration.py
+      - tests/test_voice.py
+      - tests/test_wheel_metadata.py
+      - tests/wheel_api_smoke.py
+    stats:
+      files_changed: 24
+      insertions: 1012
+      deletions: 77
+    inspected: true
+    inspected_paths:
+      - README.md
+      - pyproject.toml
+      - soprosynth/api.py
+      - soprosynth/_onnxvoice.py
+      - soprosynth/postprocess.py
+      - soprosynth/config.py
+      - soprosynth/voice.py
+      - tests/test_postprocess.py
+      - tests/test_sopro_orchestration.py
+    observed_behavior:
+      Added Sopro-compatible text segmentation and native/raw output
+      conditioning with gain, trimming, fades, limiting, result metadata, and explicit
+      raw-mode behavior.
+    public_impact: public
+    decision: accepted
+    stale: false
+    evidence_subject: "feat: improve audio"
+    target_entry_key: output
+    target_entry_id: entry-0004
+    notes: Reviewed against focused postprocessing and orchestration tests.
+  - sha: 333bf6a9a8d31dc9912c202ac8a9665d1171fdad
+    source_ref: git:333bf6a9a8d31dc9912c202ac8a9665d1171fdad
+    short_sha: 333bf6a
+    changed_paths:
+      - README.md
+      - examples/README.md
+      - examples/quickstart.py
+      - pyproject.toml
+      - soprosynth/__init__.py
+      - soprosynth/_onnxvoice.py
+      - soprosynth/api.py
+      - soprosynth/api_contract.py
+      - soprosynth/calibration.py
+      - soprosynth/config.py
+      - soprosynth/postprocess.py
+      - soprosynth/types.py
+      - tests/integration/test_real_onnx_sopro.py
+      - tests/test_api.py
+      - tests/test_api_contract.py
+      - tests/test_calibration.py
+      - tests/test_cli.py
+      - tests/test_config.py
+      - tests/test_onnx.py
+      - tests/test_package_boundary.py
+      - tests/test_sopro_orchestration.py
+      - tests/test_source_boundary.py
+      - tests/test_streaming.py
+      - tests/test_streaming_conditioner.py
+      - tests/test_wheel_metadata.py
+      - tests/wheel_api_smoke.py
+    stats:
+      files_changed: 26
+      insertions: 1751
+      deletions: 364
+    inspected: true
+    inspected_paths:
+      - README.md
+      - pyproject.toml
+      - soprosynth/__init__.py
+      - soprosynth/_onnxvoice.py
+      - soprosynth/api.py
+      - soprosynth/postprocess.py
+      - soprosynth/types.py
+      - tests/test_streaming.py
+      - tests/test_streaming_conditioner.py
+      - tests/test_sopro_orchestration.py
+    observed_behavior:
+      Added synchronous streaming and prewarm APIs, incremental conditioning
+      and chunk metadata, semantic carry through long text, and released-wheel integration
+      gating.
+    public_impact: public
+    decision: accepted
+    stale: false
+    evidence_subject: "feat: add missing features"
+    target_entry_key: streaming
+    target_entry_id: entry-0005
+    notes:
+      Streaming methods are implemented but capability flags remain gated by the
+      documented real-model integration condition.
+  - sha: dc92b04f5cd54eb39fd7ebb456cac4eeb1636281
+    source_ref: git:dc92b04f5cd54eb39fd7ebb456cac4eeb1636281
+    short_sha: dc92b04
+    changed_paths:
+      - .github/workflows/python-publish.yml
+      - .github/workflows/tests.yml
+      - pyproject.toml
+      - tests/test_wheel_metadata.py
+    stats:
+      files_changed: 4
+      insertions: 23
+      deletions: 4
+    inspected: true
+    inspected_paths:
+      - .github/workflows/python-publish.yml
+      - .github/workflows/tests.yml
+      - pyproject.toml
+      - tests/test_wheel_metadata.py
+    observed_behavior:
+      Tightened CI and wheel metadata checks; no distinct user-facing
+      runtime behavior.
+    public_impact: internal
+    decision: internal
+    stale: false
+    evidence_subject: "chore: fix ci"
+    target_entry_id: entry-0006
+    notes: Internal release automation maintenance.

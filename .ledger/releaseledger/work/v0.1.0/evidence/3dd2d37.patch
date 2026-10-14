@@ -1,0 +1,1208 @@
+ .codecrate.toml                                 |  24 +++
+ .github/workflows/tests.yml                     |  16 ++
+ .gitignore                                      |   2 +
+ .ledger/ledger.toml                             |  24 +++
+ .ledger/releaseledger/.ledger-project.toml      |   6 +
+ .ledger/releaseledger/config.toml               |  57 +++++
+ .ledger/releaseledger/data/.ledger-project.toml |   6 +
+ .ledger/taskledger/.ledger-project.toml         |   6 +
+ .ledger/taskledger/config.toml                  |   7 +
+ .pre-commit-config.yaml                         |  64 ++++++
+ README.md                                       |  77 ++++++-
+ START_HERE.md                                   |  39 ++++
+ examples/local_onnx_inspect.py                  |   8 +
+ examples/native_first_wav.py                    |   7 +
+ pyproject.toml                                  |  38 ++++
+ soprosynth/__init__.py                          |  30 +++
+ soprosynth/__main__.py                          |  36 ++++
+ soprosynth/api.py                               | 267 ++++++++++++++++++++++++
+ soprosynth/errors.py                            |  10 +
+ soprosynth/onnx.py                              | 197 +++++++++++++++++
+ soprosynth/py.typed                             |   0
+ tests/test_api.py                               |  66 ++++++
+ tests/test_onnx.py                              |  59 ++++++
+ 23 files changed, 1045 insertions(+), 1 deletion(-)
+
+diff --git a/.codecrate.toml b/.codecrate.toml
+new file mode 100644
+index 0000000..7b9ed0f
+--- /dev/null
++++ b/.codecrate.toml
+@@ -0,0 +1,24 @@
++[codecrate]
++output = "context_soprosynth.md"
++keep_docstrings = true
++dedupe = true
++respect_gitignore = true
++exclude = ["*/.venv/*", "context_soprosynth.*"]
++include = [
++  "**/*.py",
++  "**/*.json",
++  "**/*.toml",
++  "**/*.rst",
++  "**/*.md",
++  "**/*.yaml",
++  "**/*.yml",
++  "**/py.typed",
++  "**/NOTICE",
++  "**/NOTICE.*",
++  "**/MANIFEST.in",
++  "LICENSE*",
++]
++split_max_chars = 2500000
++layout = "full"
++profile = "portable-agent"
++emit_standalone_unpacker = true
+diff --git a/.github/workflows/tests.yml b/.github/workflows/tests.yml
+new file mode 100644
+index 0000000..4525e40
+--- /dev/null
++++ b/.github/workflows/tests.yml
+@@ -0,0 +1,16 @@
++name: tests
++on: [push, pull_request]
++jobs:
++  test:
++    runs-on: ubuntu-latest
++    strategy:
++      matrix:
++        python-version: ['3.10','3.12','3.13']
++    steps:
++      - uses: actions/checkout@v4
++        with: {fetch-depth: 0}
++      - uses: actions/setup-python@v5
++        with: {python-version: '${{ matrix.python-version }}'}
++      - run: python -m pip install -e '.[dev]'
++      - run: pytest -q
++      - run: python -m build
+diff --git a/.gitignore b/.gitignore
+index 6f596e1..0791f7c 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -218,3 +218,5 @@ __marimo__/
+
+ # Streamlit
+ .streamlit/secrets.toml
++soprosynth/_version.py
++context_soprosynth*.*
+diff --git a/.ledger/ledger.toml b/.ledger/ledger.toml
+new file mode 100644
+index 0000000..925e16c
+--- /dev/null
++++ b/.ledger/ledger.toml
+@@ -0,0 +1,24 @@
++schema_version = 3
++
++[project]
++uuid = "9fdb95c1-7577-4913-b174-f79a7d05e6f7"
++name = "soprosynth"
++
++[ledgers.taskledger.mounts.data]
++storage = "external"
++root = "../ledger"
++
++[ledgers.taskledger.mounts.runtime]
++storage = "user-data"
++
++[ledgers.taskledger.mounts.logs]
++storage = "user-data"
++
++[ledgers.taskledger.mounts.indexes]
++storage = "cache"
++
++[ledgers.releaseledger.mounts.data]
++storage = "project"
++
++[ledgers.releaseledger.mounts.indexes]
++storage = "cache"
+diff --git a/.ledger/releaseledger/.ledger-project.toml b/.ledger/releaseledger/.ledger-project.toml
+new file mode 100644
+index 0000000..fbc9bf4
+--- /dev/null
++++ b/.ledger/releaseledger/.ledger-project.toml
+@@ -0,0 +1,6 @@
++schema_version = 1
++layout_version = 3
++project_uuid = "9fdb95c1-7577-4913-b174-f79a7d05e6f7"
++tool = "releaseledger"
++mount = "config"
++storage = "project"
+diff --git a/.ledger/releaseledger/config.toml b/.ledger/releaseledger/config.toml
+new file mode 100644
+index 0000000..569a1e9
+--- /dev/null
++++ b/.ledger/releaseledger/config.toml
+@@ -0,0 +1,57 @@
++config_version = 2
++# Branch-scoped release state. This block is safe to commit.
++ledger_ref = "main"
++ledger_parent_ref = ""
++ledger_branch_guard = "off"
++# Cross-ledger identity. Local record IDs stay unchanged.
++
++[ledger]
++code = "rl"
++# Release defaults.
++
++[release]
++default_changelog = "CHANGELOG.md"
++default_status = "planned"
++allow_dirty_worktree = true
++# Changelog build defaults.
++
++[changelog]
++output = "CHANGELOG.md"
++header = ""
++body = """## {% if release.date %}[{{ release.version }}] - {{ release.date }}{% else %}[{{ release.version }}] - Unreleased{% endif %}
++
++{% for group in groups %}
++### {{ group.title }}
++{% for entry in group.entries %}
++- {% if entry.breaking %}**BREAKING:** {% endif %}{{ entry.summary }}
++{% endfor %}
++
++{% endfor %}
++"""
++footer = "<!-- generated by releaseledger -->"
++trim = true
++render_always = false
++postprocessors = []
++standard = ""
++group_mode = "extended"
++link_references = false
++repository_url = ""
++tag_prefix = "v"
++compare_url_template = ""
++release_url_template = ""
++preamble = ""
++semver = false
++unreleased = true
++# Git-first release evidence.
++
++[git]
++enabled = true
++tag_creation = "local"
++default_base = "previous_release_tag"
++default_head = "HEAD"
++previous_tag_patterns = ["v{version}", "{version}"]
++include_merges = "nontrivial"
++require_clean_worktree = false
++max_commits = 500
++max_diff_chars_per_commit = 12000
++candidate_status = "draft"
+diff --git a/.ledger/releaseledger/data/.ledger-project.toml b/.ledger/releaseledger/data/.ledger-project.toml
+new file mode 100644
+index 0000000..552c3a2
+--- /dev/null
++++ b/.ledger/releaseledger/data/.ledger-project.toml
+@@ -0,0 +1,6 @@
++schema_version = 1
++layout_version = 3
++project_uuid = "9fdb95c1-7577-4913-b174-f79a7d05e6f7"
++tool = "releaseledger"
++mount = "data"
++storage = "project"
+diff --git a/.ledger/taskledger/.ledger-project.toml b/.ledger/taskledger/.ledger-project.toml
+new file mode 100644
+index 0000000..36900e7
+--- /dev/null
++++ b/.ledger/taskledger/.ledger-project.toml
+@@ -0,0 +1,6 @@
++schema_version = 1
++layout_version = 3
++project_uuid = "9fdb95c1-7577-4913-b174-f79a7d05e6f7"
++tool = "taskledger"
++mount = "config"
++storage = "project"
+diff --git a/.ledger/taskledger/config.toml b/.ledger/taskledger/config.toml
+new file mode 100644
+index 0000000..6f94549
+--- /dev/null
++++ b/.ledger/taskledger/config.toml
+@@ -0,0 +1,7 @@
++# Project-local Taskledger configuration.
++# Storage topology belongs to Ledgercore; branch state belongs to data/state.toml.
++config_version = 3
++
++[ledger]
++code = 'tl'
++name = 'taskledger'
+diff --git a/.pre-commit-config.yaml b/.pre-commit-config.yaml
+new file mode 100644
+index 0000000..61a9e5e
+--- /dev/null
++++ b/.pre-commit-config.yaml
+@@ -0,0 +1,64 @@
++exclude: |
++  # NOT INSTALLABLE ADDONS
++  # END NOT INSTALLABLE ADDONS
++  # Files and folders generated by bots, to avoid loops
++  ^setup/|/static/description/index\.html$|
++  # We don't want to mess with tool-generated files
++  .svg$|/tests/([^/]+/)?cassettes/|^.copier-answers.yml$|^.github/|
++  # Maybe reactivate this when all README files include prettier ignore tags?
++  ^README\.md$|
++  # Repos using Sphinx to generate docs don't need prettying
++  ^docs/_templates/.*\.html$|
++  # Don't bother non-technical authors with formatting issues in docs
++  readme/.*\.(rst|md)$|
++  # Ignore build and dist directories in addons
++  /build/|/dist/|/dev/|/notnebooks/
++  # You don't usually want a bot to modify your legal texts
++  (LICENSE.*|COPYING.*)|
++default_language_version:
++  python: python3
++repos:
++  - repo: local
++    hooks:
++      - id: ruff-check
++        name: ruff check
++        entry: ruff check --exit-non-zero-on-fix --force-exclude
++        language: system
++        types_or: [python, pyi]
++      - id: ruff-format
++        name: ruff format
++        entry: ruff format --force-exclude
++        language: system
++        types_or: [python, pyi]
++  - repo: https://github.com/asottile/pyupgrade
++    rev: v3.21.2
++    hooks:
++      - id: pyupgrade
++        args: [--py310-plus]
++  - repo: https://github.com/pre-commit/pre-commit-hooks
++    rev: v6.0.0
++    hooks:
++      - id: check-toml
++      - id: check-yaml
++      - id: end-of-file-fixer
++      - id: trailing-whitespace
++      - id: check-symlinks
++      - id: check-xml
++      - id: mixed-line-ending
++        args: ["--fix=lf"]
++      - id: debug-statements
++      - id: check-case-conflict
++      - id: check-docstring-first
++      - id: check-executables-have-shebangs
++      - id: check-merge-conflict
++  - repo: https://github.com/pre-commit/mirrors-prettier
++    rev: v4.0.0-alpha.8
++    hooks:
++      - id: prettier
++        name: prettier (with plugin-xml)
++        additional_dependencies:
++          - "prettier@2.7.1"
++          - "@prettier/plugin-xml@2.2.0"
++        args:
++          - --plugin=@prettier/plugin-xml
++        files: \.(css|htm|html|js|json|jsx|less|md|scss|toml|ts|xml|yaml|yml)$
+diff --git a/README.md b/README.md
+index ab98926..54e835c 100644
+--- a/README.md
++++ b/README.md
+@@ -1 +1,76 @@
+-# soprosynth
+\ No newline at end of file
++# SoproSynth
++
++Minimal, flat-layout Python API for Samuel Vitorino's **Sopro V2 Turbo**, inspired by
++PocketSynth. Python >=3.10. Packaging uses setuptools_scm Git-tag versioning
++(`git tag v0.1.0`, `python -m build`); there is **no src/ directory**.
++
++## Install
++
++```bash
++python -m pip install -e '.[native,dev]'
++pytest -q
++```
++
++The **native** backend works through the upstream `sopro>=2.2.0` PyTorch implementation,
++using Apache-2.0 upstream model weights. It will download real weights on first run.
++
++```python
++from soprosynth import SoproRuntime, SynthesisRequest
++with SoproRuntime.from_pretrained() as tts:
++    voice = tts.prepare_voice('reference.wav')
++    result = tts.synthesize(SynthesisRequest('Hello!',language='en'), voice=voice)
++    result.save_wav('hello.wav')
++```
++
++## Embedded OnnxVoice ONNX graph runtime (partial)
++
++```bash
++pip install -e '.[cpu]'
++soprosynth inspect /path/to/sopro-v2-turbo-onnx --profile wasm-uint8
++```
++
++```python
++from soprosynth import SoproRuntime
++with SoproRuntime.from_onnx_local('/path/to/export', profile='wasm-uint8') as tts:
++    adapter = tts.onnx_adapter
++    print(adapter.graphs)
++    print(adapter.graph_specs('reference'))  # initializes ONNX Runtime session
++    # adapter.run_graph('reference', mapping_of_exact_onnx_input_tensors)
++```
++
++This uses public OnnxVoice `register_adapter` + `OnnxVoice.open_local` and `OnnxSession`.
++ONNX artifacts must be downloaded separately in **original export folder layout**:
++`manifest.json`, `tokenizer.json`, `common/`, `wasm-uint8/`, `webgpu-fp16/`.
++The `sopro-onnx-bundles` companion repo provides the pinned-revision catalog builder
++and a development-only downloader for local ONNX graph testing.
++
++**Important limitation:** ONNX `synthesize`, `prepare_voice` and streaming are not yet
++implemented. They raise `OnnxPipelineNotImplementedError` rather than returning fake
++speech. The model has a reference encoder, autoregressive semantic decoder, acoustic
++conditioning + ODE solver and vocoder. An ONNX port must reproduce the upstream JS
++host-side DSP, token sampling and generation loop. `wasm-uint8` is exported for
++ONNX Runtime Web/WASM; support in native Python ONNX Runtime requires actual graph tests.
++
++## Scope and responsibilities
++
++- **SoproSynth:** API, request validation, WAV output, Sopro-specific voice lifecycle,
++  optional working upstream native backend.
++- **OnnxVoice:** registered Sopro ONNX adapter, ONNX sessions, execution providers,
++  graph diagnostics (with this MVP's in-package adapter registration).
++- **sopro-onnx-bundles:** manifest ingest, revision pinning, catalog generation,
++  provenance; not a Python package and not a model mirror.
++
++## TODO for real ONNX synthesis
++
++1. Validate all graphs + shards on ONNX Runtime CPU and compare to official web outputs.
++2. Port `web/src/dsp.js` reference frontend and tokenizer JSON from official runtime.
++3. Port `semantic_prefix` + `semantic_core` cached autoregressive token loop.
++4. Port `acoustic_condition` + two-step offline acoustic sampling / rotary inputs.
++5. Port vocoder output normalization, append audio parity and streaming state.
++6. Move Sopro catalog parsing, install and the adapter into an upstream OnnxVoice PR;
++   then simplify this in-package adapter to a thin compatibility layer.
++
++Upstream: https://github.com/samuel-vitorino/sopro
++ONNX weights: https://huggingface.co/samuel-vitorino/sopro-v2-turbo-onnx
++
++Software is Apache-2.0. No pretrained weights are redistributed.
+diff --git a/START_HERE.md b/START_HERE.md
+new file mode 100644
+index 0000000..ded27ce
+--- /dev/null
++++ b/START_HERE.md
+@@ -0,0 +1,39 @@
++# Getting started with SoproSynth
++
++The two archives are independent Git repository starters. This is a **source MVP**,
++not the finished native-ONNX audio synthesizer.
++
++```bash
++cd soprosynth
++python -m pip install -e '.[native,dev]'
++pytest -q
++python -m soprosynth speak 'Hello from Sopro' --ref path/to/reference.wav --out hello.wav
++```
++
++The native command above calls the upstream PyTorch Sopro backend and downloads weights.
++For ONNX, use the sibling catalog repository:
++
++```bash
++cd ../sopro-onnx-bundles
++python tools/refresh_catalog.py
++python tools/verify_catalog.py catalog/bundles.json
++python tools/download_bundle.py --profile wasm-uint8 --output ../onnx-model
++cd ../soprosynth
++python -m pip install -e '.[cpu]'
++python -m soprosynth inspect ../onnx-model --profile wasm-uint8
++```
++
++The `inspect` command registers the embedded OnnxVoice Sopro adapter and enumerates
++graphs without executing them. Call `graph_specs` or `run_graph` with real tensors to
++exercise ONNX Runtime. End-to-end ONNX text-to-audio is **not implemented yet**.
++
++To activate Git-tag based dynamic versioning after unzipping:
++
++```bash
++git init
++# configure git user identity, then:
++git add .
++git commit -m 'Initial SoproSynth MVP'
++git tag v0.1.0
++python -m build
++```
+diff --git a/examples/local_onnx_inspect.py b/examples/local_onnx_inspect.py
+new file mode 100644
+index 0000000..5207f90
+--- /dev/null
++++ b/examples/local_onnx_inspect.py
+@@ -0,0 +1,8 @@
++from soprosynth import SoproRuntime
++
++# Requires a real upstream ONNX export under ./onnx-model/ and onnxruntime.
++with SoproRuntime.from_onnx_local("./onnx-model", profile="wasm-uint8") as runtime:
++    for name in runtime.onnx_adapter.graphs:
++        print(name)
++        # Print tensor shapes only if you want to initialize an ONNX Runtime session:
++        # print(runtime.onnx_adapter.graph_specs(name))
+diff --git a/examples/native_first_wav.py b/examples/native_first_wav.py
+new file mode 100644
+index 0000000..b82ee49
+--- /dev/null
++++ b/examples/native_first_wav.py
+@@ -0,0 +1,7 @@
++from soprosynth import SoproRuntime, SynthesisRequest
++
++# Requires pip install -e '.[native]' and your own licensed reference WAV.
++with SoproRuntime.from_pretrained() as tts:
++    voice = tts.prepare_voice("reference.wav")
++    result = tts.synthesize(SynthesisRequest("Hello from SoproSynth.", language="en"), voice=voice)
++    result.save_wav("hello.wav")
+diff --git a/pyproject.toml b/pyproject.toml
+new file mode 100644
+index 0000000..54f8d00
+--- /dev/null
++++ b/pyproject.toml
+@@ -0,0 +1,38 @@
++[build-system]
++requires = ["setuptools>=68", "setuptools_scm[toml]>=8", "wheel"]
++build-backend = "setuptools.build_meta"
++
++[project]
++name = "soprosynth"
++dynamic = ["version"]
++description = "Sopro TTS API with OnnxVoice graph embedding"
++readme = "README.md"
++requires-python = ">=3.10"
++license = {text = "Apache-2.0"}
++dependencies = ["numpy>=1.23", "onnxvoice>=0.2.4,<0.4"]
++keywords = ["sopro", "tts", "onnx", "onnxvoice"]
++
++[project.optional-dependencies]
++# Native backend provides a working TTS path until the multi-graph ONNX loop is implemented.
++native = ["sopro>=2.2.0,<3"]
++cpu = ["onnxruntime>=1.18"]
++gpu = ["onnxruntime-gpu>=1.18"]
++dev = ["pytest>=8", "build>=1.2", "ruff>=0.8", "setuptools_scm>=8"]
++
++[project.scripts]
++soprosynth = "soprosynth.__main__:main"
++
++[tool.setuptools.packages.find]
++where = ["."]
++include = ["soprosynth*"]
++[tool.setuptools.package-data]
++soprosynth = ["py.typed"]
++[tool.setuptools_scm]
++write_to = "soprosynth/_version.py"
++fallback_version = "0.0.0"
++local_scheme = "no-local-version"
++[tool.pytest.ini_options]
++testpaths = ["tests"]
++[tool.ruff]
++target-version = "py310"
++line-length = 100
+diff --git a/soprosynth/__init__.py b/soprosynth/__init__.py
+new file mode 100644
+index 0000000..8af8d78
+--- /dev/null
++++ b/soprosynth/__init__.py
+@@ -0,0 +1,30 @@
++"""Small, explicit Sopro API. Importing this module never downloads weights."""
++
++try:
++    from ._version import version as __version__
++except ImportError:
++    from importlib.metadata import PackageNotFoundError, version
++
++    try:
++        __version__ = version("soprosynth")
++    except PackageNotFoundError:
++        __version__ = "0.0.0"
++
++from .api import AudioResult, GenerationConfig, PreparedVoice, SoproRuntime, SynthesisRequest
++from .errors import SoproError, BackendUnavailableError, OnnxPipelineNotImplementedError
++from .onnx import SoproOnnxAdapter, open_onnx_bundle, register_sopro_adapter
++
++__all__ = [
++    "__version__",
++    "AudioResult",
++    "GenerationConfig",
++    "PreparedVoice",
++    "SoproRuntime",
++    "SynthesisRequest",
++    "SoproError",
++    "BackendUnavailableError",
++    "OnnxPipelineNotImplementedError",
++    "SoproOnnxAdapter",
++    "open_onnx_bundle",
++    "register_sopro_adapter",
++]
+diff --git a/soprosynth/__main__.py b/soprosynth/__main__.py
+new file mode 100644
+index 0000000..d05680f
+--- /dev/null
++++ b/soprosynth/__main__.py
+@@ -0,0 +1,36 @@
++from __future__ import annotations
++import argparse
++from . import __version__
++from .api import SoproRuntime, SynthesisRequest
++
++
++def main() -> None:
++    p = argparse.ArgumentParser(
++        prog="soprosynth", description="SoproSynth API and ONNX graph inspector"
++    )
++    p.add_argument("--version", action="version", version=__version__)
++    sub = p.add_subparsers(dest="command", required=True)
++    ins = sub.add_parser("inspect", help="inspect local exported graph names (loads no sessions)")
++    ins.add_argument("directory")
++    ins.add_argument("--profile", default="wasm-uint8")
++    sp = sub.add_parser("speak", help="synthesize using upstream native Sopro backend")
++    sp.add_argument("text")
++    sp.add_argument("--ref", required=True)
++    sp.add_argument("--out", default="out.wav")
++    sp.add_argument("--language", default=None, choices=["en", "pt", "fr", "de", "auto"])
++    args = p.parse_args()
++    if args.command == "inspect":
++        with SoproRuntime.from_onnx_local(args.directory, profile=args.profile) as runtime:
++            print("ONNX graphs:")
++            for graph in runtime.onnx_adapter.graphs:
++                print("  " + graph)
++    else:
++        with SoproRuntime.from_pretrained() as runtime:
++            out = runtime.synthesize(
++                SynthesisRequest(args.text, language=args.language), voice=args.ref
++            )
++            print(out.save_wav(args.out))
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/soprosynth/api.py b/soprosynth/api.py
+new file mode 100644
+index 0000000..ea44067
+--- /dev/null
++++ b/soprosynth/api.py
+@@ -0,0 +1,267 @@
++"""Public Python API; SoproSynth owns orchestration, not ONNX session implementation."""
++
++from __future__ import annotations
++
++import wave
++from dataclasses import dataclass
++from pathlib import Path
++from typing import Any
++from collections.abc import Iterator
++
++import numpy as np
++
++from .errors import BackendUnavailableError, OnnxPipelineNotImplementedError
++
++LANGUAGES = frozenset(("en", "pt", "fr", "de"))
++
++
++@dataclass(frozen=True, slots=True)
++class GenerationConfig:
++    temperature: float | None = None
++    top_p: float | None = None
++    top_k: int | None = None
++    steps: int | None = None
++    max_seconds: float | None = None
++    min_seconds: float | None = None
++
++    def __post_init__(self) -> None:
++        if self.temperature is not None and self.temperature <= 0:
++            raise ValueError("temperature must be positive")
++        if self.top_p is not None and not (0 < self.top_p <= 1):
++            raise ValueError("top_p must be in (0, 1]")
++        if self.top_k is not None and self.top_k < 1:
++            raise ValueError("top_k must be >= 1")
++        if self.steps is not None and self.steps < 1:
++            raise ValueError("steps must be >= 1")
++        if self.max_seconds is not None and self.max_seconds <= 0:
++            raise ValueError("max_seconds must be > 0")
++
++    def as_native_kwargs(self) -> dict[str, Any]:
++        return {
++            k: v
++            for k, v in (
++                ("temperature", self.temperature),
++                ("top_p", self.top_p),
++                ("top_k", self.top_k),
++                ("steps", self.steps),
++                ("max_seconds", self.max_seconds),
++                ("min_seconds", self.min_seconds),
++            )
++            if v is not None
++        }
++
++
++@dataclass(frozen=True, slots=True)
++class SynthesisRequest:
++    text: str
++    language: str | None = None
++    config: GenerationConfig = GenerationConfig()
++    id: str | None = None
++
++    def __post_init__(self) -> None:
++        if not self.text or not self.text.strip():
++            raise ValueError("text must not be empty")
++        if self.language not in (None, "auto", *LANGUAGES):
++            raise ValueError("language must be auto, en, pt, fr, de or None")
++
++
++@dataclass(frozen=True, slots=True)
++class PreparedVoice:
++    """Precomputed upstream reference state tied to a particular runtime instance."""
++
++    source: Path
++    _state: Any
++    _owner_id: int
++
++
++@dataclass(frozen=True, slots=True)
++class AudioResult:
++    audio: np.ndarray
++    sample_rate: int
++    request_id: str | None = None
++
++    def __post_init__(self) -> None:
++        data = np.asarray(self.audio)
++        if data.ndim != 1 or not np.issubdtype(data.dtype, np.floating):
++            raise ValueError("audio must be mono 1-D floating-point samples")
++        if self.sample_rate <= 0:
++            raise ValueError("sample_rate must be positive")
++        object.__setattr__(self, "audio", np.ascontiguousarray(data, dtype=np.float32))
++
++    def save_wav(self, path: str | Path) -> Path:
++        """Write 16-bit PCM WAV without an audio I/O dependency."""
++        out = Path(path)
++        out.parent.mkdir(parents=True, exist_ok=True)
++        pcm = (np.clip(self.audio, -1, 1) * 32767).astype("<i2")
++        with wave.open(str(out), "wb") as f:
++            f.setnchannels(1)
++            f.setsampwidth(2)
++            f.setframerate(self.sample_rate)
++            f.writeframes(pcm.tobytes())
++        return out
++
++
++class SoproRuntime:
++    """Context-managed API backed by native Sopro or embedded OnnxVoice sessions.
++
++    backend='native' supports synthesis via upstream Sopro >=2.2.0 (PyTorch).
++    backend='onnx' loads and runs individual exported ONNX graphs through OnnxVoice;
++    the Sopro-specific graph pipeline is intentionally not yet implemented.
++    """
++
++    def __init__(self, engine: Any, *, backend: str) -> None:
++        self._engine = engine
++        self.backend = backend
++        self.sample_rate = int(getattr(engine, "sample_rate", 24000))
++        self._closed = False
++
++    @classmethod
++    def from_pretrained(
++        cls,
++        model: str = "samuel-vitorino/sopro-v2-turbo",
++        *,
++        device: str = "cpu",
++        revision: str | None = None,
++        cache_dir: str | Path | None = None,
++        quantization: str | None = None,
++    ) -> SoproRuntime:
++        """Create functioning native PyTorch runtime (requires soprosynth[native])."""
++        try:
++            from sopro import SoproTTS
++        except ImportError as exc:
++            raise BackendUnavailableError("Install soprosynth[native] to run synthesis. ") from exc
++        engine = SoproTTS.from_pretrained(
++            model,
++            device=device,
++            revision=revision,
++            cache_dir=str(cache_dir) if cache_dir is not None else None,
++            quantization=quantization,
++        )
++        return cls(engine, backend="native")
++
++    @classmethod
++    def from_onnx_local(
++        cls,
++        directory: str | Path,
++        *,
++        profile: str = "wasm-uint8",
++        providers: str | tuple[str, ...] = "cpu",
++        verify: bool = True,
++    ) -> SoproRuntime:
++        """Open local multi-graph ONNX bundle via OnnxVoice's registered adapter."""
++        from .onnx import open_onnx_bundle
++
++        return cls(
++            open_onnx_bundle(directory, profile=profile, providers=providers, verify=verify),
++            backend="onnx",
++        )
++
++    def _ensure_open(self) -> None:
++        if self._closed:
++            raise RuntimeError("SoproRuntime is closed")
++
++    def prepare_voice(self, audio: str | Path, *, stream: bool = False) -> PreparedVoice:
++        self._ensure_open()
++        if self.backend == "onnx":
++            raise OnnxPipelineNotImplementedError(
++                "ONNX reference preprocessing/encoding is not yet ported"
++            )
++        path = Path(audio)
++        if not path.is_file():
++            raise FileNotFoundError(path)
++        state = self._engine.prepare_reference(ref_audio_path=path, stream=stream)
++        return PreparedVoice(path, state, id(self))
++
++    def synthesize(
++        self,
++        request: SynthesisRequest | str,
++        *,
++        voice: PreparedVoice | str | Path,
++        language: str | None = None,
++        config: GenerationConfig | None = None,
++    ) -> AudioResult:
++        self._ensure_open()
++        if isinstance(request, str):
++            request = SynthesisRequest(
++                text=request, language=language, config=config or GenerationConfig()
++            )
++        elif language is not None or config is not None:
++            raise ValueError("language/config overrides require string request")
++        if self.backend == "onnx":
++            raise OnnxPipelineNotImplementedError(
++                "ONNX graph sessions work, but token generation, acoustic solver, "
++                "reference DSP and vocoder stitching are not ported. Use from_pretrained() "
++                "with soprosynth[native] for audio now."
++            )
++        kwargs = request.config.as_native_kwargs()
++        if request.language not in (None, "auto"):
++            kwargs["lang"] = request.language
++        if isinstance(voice, PreparedVoice):
++            if voice._owner_id != id(self):
++                raise ValueError("PreparedVoice belongs to another runtime")
++            kwargs["ref"] = voice._state
++        else:
++            path = Path(voice)
++            if not path.is_file():
++                raise FileNotFoundError(path)
++            kwargs["ref_audio_path"] = path
++        raw = self._engine.synthesize(request.text, **kwargs)
++        samples = _to_numpy(raw)
++        return AudioResult(samples, self.sample_rate, request_id=request.id)
++
++    def stream(
++        self,
++        request: SynthesisRequest | str,
++        *,
++        voice: PreparedVoice | str | Path,
++        chunk_frames: int | None = None,
++    ) -> Iterator[AudioResult]:
++        self._ensure_open()
++        if isinstance(request, str):
++            request = SynthesisRequest(text=request)
++        if self.backend == "onnx":
++            raise OnnxPipelineNotImplementedError("ONNX streaming pipeline not implemented")
++        kwargs = request.config.as_native_kwargs()
++        if request.language not in (None, "auto"):
++            kwargs["lang"] = request.language
++        if chunk_frames is not None:
++            kwargs["chunk_frames"] = chunk_frames
++        if isinstance(voice, PreparedVoice):
++            if voice._owner_id != id(self):
++                raise ValueError("PreparedVoice belongs to another runtime")
++            kwargs["ref"] = voice._state
++        else:
++            path = Path(voice)
++            if not path.is_file():
++                raise FileNotFoundError(path)
++            kwargs["ref_audio_path"] = path
++        for chunk in self._engine.stream(request.text, **kwargs):
++            yield AudioResult(_to_numpy(chunk), self.sample_rate, request_id=request.id)
++
++    @property
++    def onnx_adapter(self) -> Any:
++        self._ensure_open()
++        if self.backend != "onnx":
++            raise BackendUnavailableError(
++                "OnnxVoice adapter is only available with from_onnx_local"
++            )
++        return self._engine
++
++    def close(self) -> None:
++        if not self._closed:
++            if hasattr(self._engine, "close"):
++                self._engine.close()
++            self._closed = True
++
++    def __enter__(self) -> SoproRuntime:
++        self._ensure_open()
++        return self
++
++    def __exit__(self, *_: object) -> None:
++        self.close()
++
++
++def _to_numpy(value: Any) -> np.ndarray:
++    if hasattr(value, "detach"):
++        value = value.detach().cpu().numpy()
++    return np.asarray(value, dtype=np.float32).reshape(-1)
+diff --git a/soprosynth/errors.py b/soprosynth/errors.py
+new file mode 100644
+index 0000000..e8e557c
+--- /dev/null
++++ b/soprosynth/errors.py
+@@ -0,0 +1,10 @@
++class SoproError(Exception):
++    """Base SoproSynth error."""
++
++
++class BackendUnavailableError(SoproError):
++    """Required optional runtime missing or unsupported."""
++
++
++class OnnxPipelineNotImplementedError(SoproError, NotImplementedError):
++    """The upstream ONNX graph orchestration is not ported to Python yet."""
+diff --git a/soprosynth/onnx.py b/soprosynth/onnx.py
+new file mode 100644
+index 0000000..19c3ca2
+--- /dev/null
++++ b/soprosynth/onnx.py
+@@ -0,0 +1,197 @@
++"""ONNX graph loading bridge through the existing OnnxVoice public extension API.
++
++No private OnnxVoice monkeypatching or reimplementation of the ONNX session abstraction.
++"""
++
++from __future__ import annotations
++
++import hashlib
++import json
++import posixpath
++from pathlib import Path
++from typing import Any
++from collections.abc import Mapping
++
++from .errors import BackendUnavailableError, OnnxPipelineNotImplementedError
++from onnxvoice.systems.base import SystemAdapter
++
++
++def _safe_manifest_path(profile: str, name: str) -> str:
++    # Manifest links are relative to the profile directory, including ../common.
++    if (
++        not isinstance(name, str)
++        or not name
++        or name.startswith(("/", "\\"))
++        or chr(92) in name
++        or "://" in name
++    ):
++        raise ValueError(f"unsafe upstream artifact path: {name!r}")
++    canonical = posixpath.normpath(posixpath.join(profile, name))
++    if canonical in (".", "..") or canonical.startswith("../") or canonical.startswith("/"):
++        raise ValueError(f"artifact escapes bundle root: {name!r}")
++    return canonical
++
++
++def _check_hash(path: Path, sha256: str | None) -> None:
++    if sha256 is None:
++        return
++    digest = hashlib.sha256()
++    with path.open("rb") as f:
++        for data in iter(lambda: f.read(1024 * 1024), b""):
++            digest.update(data)
++    if digest.hexdigest().lower() != sha256.lower():
++        raise ValueError(f"SHA256 mismatch: {path}")
++
++
++class SoproOnnxAdapter(SystemAdapter):
++    """OnnxVoice SystemAdapter with graph-level execution and typed diagnostics.
++
++    The Sopro multi-stage generation loop is *not* implemented. ``run_graph`` is
++    useful for porting one graph at a time against the upstream JavaScript runtime.
++    """
++
++    system = "sopro"
++
++    def __init__(
++        self,
++        installation: Any,
++        *,
++        providers: Any = None,
++        provider_options: Any = None,
++        session_options: Any = None,
++    ) -> None:
++        from onnxvoice import OnnxSession
++
++        super().__init__(
++            installation,
++            providers=providers,
++            provider_options=provider_options,
++            session_options=session_options,
++        )
++        self.sample_rate = installation.sample_rate or 24000
++        self._sessions: dict[str, Any] = {}
++        self._graph_paths = {
++            item.component: item.path
++            for item in installation.artifacts
++            if item.role == "graph" and item.component
++        }
++        if not self._graph_paths:
++            raise ValueError("No Sopro ONNX graph artifacts in installation")
++        self._session_args = dict(
++            providers=providers, provider_options=provider_options, session_options=session_options
++        )
++        self._session_type = OnnxSession
++
++    @property
++    def graphs(self) -> tuple[str, ...]:
++        return tuple(sorted(self._graph_paths))
++
++    def session(self, graph: str) -> Any:
++        if graph not in self._graph_paths:
++            raise KeyError(f"Unknown Sopro graph: {graph!r}")
++        if graph not in self._sessions:
++            self._sessions[graph] = self._session_type(
++                self._graph_paths[graph], component=graph, **self._session_args
++            )
++        return self._sessions[graph]
++
++    def graph_specs(self, graph: str) -> dict[str, Any]:
++        s = self.session(graph)
++        return {
++            "inputs": s.input_specs,
++            "outputs": s.output_specs,
++            "providers": s.resolved_providers,
++        }
++
++    def run_graph(self, graph: str, inputs: Mapping[str, Any]) -> list[Any]:
++        """Execute one ONNX graph. Input tensors must match its real ONNX contract."""
++        return self.session(graph).run(dict(inputs))
++
++    def infer(self, token_ids: Any, **kwargs: Any) -> Any:
++        raise OnnxPipelineNotImplementedError(
++            "Sopro does not have a single token-id -> audio graph; port reference DSP, "
++            "semantic decoding, acoustic conditioning, ODE and vocoder sequencing first."
++        )
++
++    def diagnostics(self) -> Any:
++        # Reuse the public SystemAdapter diagnostics contract.
++        return super().diagnostics()
++
++    def close(self) -> None:
++        for session in self._sessions.values():
++            session.close()
++        self._sessions.clear()
++
++    def __enter__(self) -> SoproOnnxAdapter:
++        return self
++
++    def __exit__(self, *_: object) -> None:
++        self.close()
++
++
++def register_sopro_adapter() -> None:
++    """Register with OnnxVoice's documented public SystemAdapter registry."""
++    try:
++        from onnxvoice import register_adapter
++    except ImportError as exc:
++        raise BackendUnavailableError("onnxvoice is required") from exc
++    register_adapter("sopro", SoproOnnxAdapter)
++
++
++def open_onnx_bundle(
++    directory: str | Path,
++    *,
++    profile: str = "wasm-uint8",
++    providers: Any = "cpu",
++    verify: bool = True,
++) -> SoproOnnxAdapter:
++    """Open an upstream-exported local bundle (manifest.json + tokenizer + ONNX graphs).
++
++    ``directory`` follows upstream export layout: manifest.json, common/, wasm-uint8/,
++    webgpu-fp16/. The exporter uses external weights in sibling shards. The
++    Python ONNX Runtime provider is selected explicitly by the caller.
++    """
++    root = Path(directory).expanduser().resolve()
++    raw = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
++    if raw.get("format") != 1 or not isinstance(raw.get("profiles"), dict):
++        raise ValueError("Not a supported Sopro upstream ONNX manifest (format=1)")
++    if profile not in raw["profiles"]:
++        raise ValueError(f"Unknown profile {profile!r}; choices: {sorted(raw['profiles'])}")
++    info = raw["profiles"][profile]
++    graphs, shards = info.get("graphs"), info.get("shards")
++    if not isinstance(graphs, dict) or not graphs or not isinstance(shards, dict):
++        raise ValueError("Sopro manifest has no graph and shard definitions")
++    files: dict[str, Path] = {"manifest": root / "manifest.json"}
++    for name, item in graphs.items():
++        rel = _safe_manifest_path(profile, item.get("url") or item["file"])
++        path = root / rel
++        if not path.is_file():
++            raise FileNotFoundError(path)
++        if verify:
++            _check_hash(path, item.get("sha256"))
++        files[f"graph:{name}"] = path
++    for name, item in shards.items():
++        rel = _safe_manifest_path(profile, item.get("url") or item["file"])
++        path = root / rel
++        if not path.is_file():
++            raise FileNotFoundError(path)
++        if verify:
++            _check_hash(path, item.get("sha256"))
++        files[f"shard:{name}"] = path
++    tokenizer = root / str(raw["tokenizer"])
++    if not tokenizer.is_file():
++        raise FileNotFoundError(tokenizer)
++    files["tokenizer"] = tokenizer
++    register_sopro_adapter()
++    try:
++        from onnxvoice import OnnxVoice
++    except ImportError as exc:
++        raise BackendUnavailableError("onnxvoice not installed") from exc
++    return OnnxVoice.open_local(
++        system="sopro",
++        files=files,
++        providers=providers,
++        sample_rate=raw["sampleRate"],
++        runtime={"layout": "multi", "profile": profile, "revision": raw.get("revision")},
++        metadata={"model": raw.get("model"), "onnx_profile": profile},
++    )
+diff --git a/soprosynth/py.typed b/soprosynth/py.typed
+new file mode 100644
+index 0000000..e69de29
+diff --git a/tests/test_api.py b/tests/test_api.py
+new file mode 100644
+index 0000000..391a96d
+--- /dev/null
++++ b/tests/test_api.py
+@@ -0,0 +1,66 @@
++import sys
++import types
++import wave
++import numpy as np
++import pytest
++from soprosynth import AudioResult, GenerationConfig, SynthesisRequest, SoproRuntime
++from soprosynth.errors import OnnxPipelineNotImplementedError
++
++
++def test_validation():
++    with pytest.raises(ValueError):
++        SynthesisRequest(" ")
++    with pytest.raises(ValueError):
++        SynthesisRequest("hello", language="ru")
++    with pytest.raises(ValueError):
++        GenerationConfig(top_p=2)
++
++
++def test_save(tmp_path):
++    file = AudioResult(np.array([0.0, 0.5, -0.5], dtype="f4"), 24000).save_wav(tmp_path / "out.wav")
++    with wave.open(str(file)) as f:
++        assert f.getnframes() == 3 and f.getframerate() == 24000
++
++
++def test_native_backend_wiring(monkeypatch, tmp_path):
++    path = tmp_path / "reference.wav"
++    path.touch()
++
++    class FakeNative:
++        sample_rate = 24000
++
++        @classmethod
++        def from_pretrained(cls, *a, **kw):
++            return cls()
++
++        def prepare_reference(self, **kw):
++            return {"voice": 1}
++
++        def synthesize(self, text, **kwargs):
++            assert text == "hello" and kwargs["lang"] == "de" and kwargs["ref"] == {"voice": 1}
++            return np.array([0.25, -0.25], dtype=np.float32)
++
++        def stream(self, text, **kwargs):
++            yield np.array([0.5], dtype=np.float32)
++
++    monkeypatch.setitem(sys.modules, "sopro", types.SimpleNamespace(SoproTTS=FakeNative))
++    with SoproRuntime.from_pretrained() as tts:
++        v = tts.prepare_voice(path)
++        out = tts.synthesize(SynthesisRequest("hello", language="de", id="a"), voice=v)
++        assert out.audio.tolist() == pytest.approx([0.25, -0.25])
++        assert out.request_id == "a"
++        assert len(list(tts.stream("hello", voice=v))) == 1
++    with pytest.raises(RuntimeError):
++        tts.prepare_voice(path)
++
++
++def test_onnx_not_claimed():
++    class Fake:
++        sample_rate = 24000
++
++        def close(self):
++            pass
++
++    with SoproRuntime(Fake(), backend="onnx") as tts:
++        with pytest.raises(OnnxPipelineNotImplementedError):
++            tts.synthesize("test", voice="x.wav")
+diff --git a/tests/test_onnx.py b/tests/test_onnx.py
+new file mode 100644
+index 0000000..9d68699
+--- /dev/null
++++ b/tests/test_onnx.py
+@@ -0,0 +1,59 @@
++import hashlib
++import json
++from pathlib import Path
++import pytest
++from soprosynth.onnx import _safe_manifest_path, open_onnx_bundle
++
++
++def test_paths():
++    assert _safe_manifest_path("wasm-uint8", "../common/reference.onnx") == "common/reference.onnx"
++    for bad in ("../../escape", "https://example.org/x", "/etc/passwd", "../.."):
++        with pytest.raises(ValueError):
++            _safe_manifest_path("wasm-uint8", bad)
++
++
++def test_open_local_uses_onnxvoice_api(tmp_path, monkeypatch):
++    from soprosynth import onnx
++
++    (tmp_path / "common").mkdir()
++    data = b"example fixture, not an ONNX model"
++    (tmp_path / "common" / "ref.onnx").write_bytes(data)
++    (tmp_path / "common" / "weights.bin").write_bytes(data)
++    (tmp_path / "tokenizer.json").write_text("{}")
++    h = hashlib.sha256(data).hexdigest()
++    manifest = {
++        "format": 1,
++        "sampleRate": 24000,
++        "tokenizer": "tokenizer.json",
++        "profiles": {
++            "wasm-uint8": {
++                "graphs": {
++                    "reference": {"url": "../common/ref.onnx", "file": "ref.onnx", "sha256": h}
++                },
++                "shards": {
++                    "reference": {
++                        "url": "../common/weights.bin",
++                        "file": "weights.bin",
++                        "sha256": h,
++                    }
++                },
++            }
++        },
++    }
++    (tmp_path / "manifest.json").write_text(json.dumps(manifest))
++
++    class FakeOnnxVoice:
++        @staticmethod
++        def open_local(**kwargs):
++            return kwargs
++
++    monkeypatch.setattr(onnx, "register_sopro_adapter", lambda: None)
++    import onnxvoice
++
++    monkeypatch.setattr(onnxvoice, "OnnxVoice", FakeOnnxVoice)
++    result = open_onnx_bundle(tmp_path)
++    assert result["system"] == "sopro" and "graph:reference" in result["files"]
++    assert result["sample_rate"] == 24000
++    (tmp_path / "common" / "ref.onnx").write_bytes(b"tampered")
++    with pytest.raises(ValueError, match="SHA256"):
++        open_onnx_bundle(tmp_path)

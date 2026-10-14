@@ -1,0 +1,85 @@
+ .github/workflows/python-publish.yml |  1 -
+ .github/workflows/tests.yml          |  4 ++++
+ pyproject.toml                       | 11 ++++++++++-
+ tests/test_wheel_metadata.py         | 11 +++++++++--
+ 4 files changed, 23 insertions(+), 4 deletions(-)
+
+diff --git a/.github/workflows/python-publish.yml b/.github/workflows/python-publish.yml
+index de2a1a6..80e513e 100644
+--- a/.github/workflows/python-publish.yml
++++ b/.github/workflows/python-publish.yml
+@@ -77,5 +77,4 @@ jobs:
+         uses: pypa/gh-action-pypi-publish@release/v1
+         with:
+           packages-dir: dist/
+-          password: ${{ secrets.PYPI_API_TOKEN }}
+           attestations: false
+diff --git a/.github/workflows/tests.yml b/.github/workflows/tests.yml
+index ed55703..c4a1679 100644
+--- a/.github/workflows/tests.yml
++++ b/.github/workflows/tests.yml
+@@ -20,6 +20,10 @@ jobs:
+       run: |
+         python -m pip install -e ".[dev]"
+         python -m compileall -q soprosynth tests
++    - name: Verify development environment
++      run: |
++        python -m pip check
++        python -c "import build, packaging, setuptools, setuptools_scm, wheel"
+     - name: Tests
+       run: pytest
+   python314-public-api:
+diff --git a/pyproject.toml b/pyproject.toml
+index 65b5334..314eca4 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -14,7 +14,16 @@ keywords = ["sopro", "tts", "onnx", "onnxvoice"]
+
+ [project.optional-dependencies]
+ cpu = ["onnxvoice[cpu]>=0.2.7,<0.3"]
+-dev = ["pytest>=8", "build>=1.2", "ruff>=0.8", "setuptools_scm>=8", "twine>=5"]
++dev = [
++    "pytest>=8",
++    "build>=1.2",
++    "packaging",
++    "ruff>=0.8",
++    "setuptools>=77",
++    "setuptools_scm[toml]>=8",
++    "wheel",
++    "twine>=5",
++]
+
+ [project.scripts]
+ soprosynth = "soprosynth.__main__:main"
+diff --git a/tests/test_wheel_metadata.py b/tests/test_wheel_metadata.py
+index 7d8fadf..5e9d523 100644
+--- a/tests/test_wheel_metadata.py
++++ b/tests/test_wheel_metadata.py
+@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
+ @pytest.fixture(scope="module")
+ def built_wheel(tmp_path_factory):
+     output = tmp_path_factory.mktemp("wheel")
+-    subprocess.run(
++    completed = subprocess.run(
+         [
+             sys.executable,
+             "-m",
+@@ -28,10 +28,17 @@ def built_wheel(tmp_path_factory):
+             str(output),
+         ],
+         cwd=ROOT,
+-        check=True,
++        check=False,
+         capture_output=True,
+         text=True,
+     )
++    if completed.returncode != 0:
++        pytest.fail(
++            "wheel build failed\n"
++            f"command: {completed.args!r}\n"
++            f"stdout:\n{completed.stdout}\n"
++            f"stderr:\n{completed.stderr}"
++        )
+     wheels = list(output.glob("soprosynth-*.whl"))
+     assert len(wheels) == 1
+     return wheels[0]

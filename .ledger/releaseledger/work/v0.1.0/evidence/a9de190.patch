@@ -1,0 +1,1750 @@
+ README.md                         |  78 +++++++++-------
+ examples/README.md                |   4 +
+ pyproject.toml                    |   3 +-
+ soprosynth/__init__.py            |   4 +
+ soprosynth/__main__.py            |  27 ++++--
+ soprosynth/_onnxvoice.py          | 129 ++++++++++++++++++++++++++
+ soprosynth/api.py                 | 174 +++++++++++++++++++++++++++++++----
+ soprosynth/api_contract.py        |   4 +-
+ soprosynth/calibration_builder.py |   4 +-
+ soprosynth/config.py              |  14 +++
+ soprosynth/errors.py              |   2 +-
+ soprosynth/postprocess.py         | 188 ++++++++++++++++++++++++++++++++++++++
+ soprosynth/voice.py               |  14 ++-
+ tests/test_api.py                 |  51 +++++++++++
+ tests/test_api_contract.py        |   3 +-
+ tests/test_calibration.py         |   3 +
+ tests/test_calibration_builder.py |   2 +-
+ tests/test_cli.py                 |  14 ++-
+ tests/test_onnx.py                |  88 +++++++++++++++++-
+ tests/test_postprocess.py         |  93 +++++++++++++++++++
+ tests/test_sopro_orchestration.py | 166 +++++++++++++++++++++++++++++++++
+ tests/test_voice.py               |  10 +-
+ tests/test_wheel_metadata.py      |  10 +-
+ tests/wheel_api_smoke.py          |   4 +
+ 24 files changed, 1012 insertions(+), 77 deletions(-)
+
+diff --git a/README.md b/README.md
+index 85bc661..6e70dff 100644
+--- a/README.md
++++ b/README.md
+@@ -1,24 +1,26 @@
+ # SoproSynth
+
+-SoproSynth provides a stable Python request/result API around ONNXVoice's built-in Sopro V2 Turbo implementation. SoproSynth owns request validation, reference-voice lifecycle, loudness calibration policy, result metadata, and WAV output. ONNXVoice owns Sopro model assets, tokenization, graph/session execution, and inference.
++SoproSynth provides a stable Python request/result API around ONNXVoice's built-in Sopro V2 Turbo implementation. SoproSynth owns request validation, original-rate reference forwarding, upstream-compatible offline text segmentation and semantic-token carry, native/raw output conditioning through AudioSig, optional application-level voice calibration, result metadata, and WAV output. ONNXVoice owns model assets, tokenization, ONNX graph/session execution, and neural inference.
+
+-SoproSynth supports one synthesis path: ONNXVoice's Sopro adapter. It does not vendor model weights or implement ONNX inference itself. Python 3.10 or newer is required.
++SoproSynth executes only ONNX graphs through ONNXVoice. It has no runtime dependency on the native `sopro` Python package and does not copy Sopro neural modules or model weights. Python 3.10 or newer is required.
+
+ ## Support boundary
+
+-| Capability           | v0.1.0 support                                            |
+-| -------------------- | --------------------------------------------------------- |
+-| Model                | `sopro:v2-turbo`                                          |
+-| Profile              | `wasm-uint8`                                              |
+-| Provider             | CPU (`CPUExecutionProvider`)                              |
+-| Languages            | `en`, `pt`, `fr`, `de`, and `auto`                        |
+-| Input                | One text request and a prepared reference voice           |
+-| Output               | Mono float32 PCM at 24 kHz; `save_wav()` writes PCM16 WAV |
+-| Prepared voice reuse | Supported within the same open runtime                    |
+-| Request measurement  | Supported through ONNXVoice text preparation              |
+-| Streaming            | Not supported                                             |
+-
+-Unsupported profiles and providers fail explicitly. SoproSynth does not perform language detection, text segmentation, pronunciation overrides, linguistic-token processing, word alignment, or final mastering.
++| Capability           | Current support                                              |
++| -------------------- | ------------------------------------------------------------ |
++| Model                | `sopro:v2-turbo`                                             |
++| Profile              | `wasm-uint8` (portable, quantized)                           |
++| Provider             | CPU (`CPUExecutionProvider`)                                 |
++| Languages            | `en`, `pt`, `fr`, `de`, and `auto`                           |
++| Input                | Text request and prepared reference voice                    |
++| Long text            | Upstream-compatible splitting and semantic-token carry       |
++| Output               | Native-compatible conditioning by default; raw mode optional |
++| Audio                | Mono float32 PCM at 24 kHz; `save_wav()` writes PCM16 WAV    |
++| Prepared voice reuse | Supported within the same open runtime                       |
++| Request measurement  | Supported through ONNXVoice text preparation                 |
++| Streaming            | Not supported                                                |
++
++Unsupported profiles and providers fail explicitly. `SoproOutputConfig(mode="native")` selects only Sopro-compatible DSP conditioning; it does not select native PyTorch inference or imply a model-quality tier. Language detection, pronunciation overrides, linguistic-token processing, word alignment, and streaming are not supported.
+
+ ## Install
+
+@@ -34,13 +36,7 @@ For development:
+ python -m pip install -e ".[cpu,dev]"
+ ```
+
+-Optional audio tools remain separate:
+-
+-```bash
+-python -m pip install "soprosynth[audio]"
+-```
+-
+-The audio extra provides opt-in anti-aliased reference resampling and offline loudness/peak measurement for calibration records. It is not required for synthesis.
++AudioSig `>=0.1.8,<0.2` is a required runtime dependency for reference-rate handling and output conditioning. ONNXVoice remains optional until inference is requested; install the `cpu` extra to synthesize.
+
+ ## Quickstart
+
+@@ -59,12 +55,12 @@ with SoproRuntime.from_pretrained() as runtime:
+     result.save_wav("hello.wav")
+ ```
+
+-The default model is `sopro:v2-turbo`; defaults are profile `wasm-uint8` and CPU execution. See [`examples/quickstart.py`](examples/quickstart.py).
++The default model is `sopro:v2-turbo`; defaults are profile `wasm-uint8`, CPU execution, and native-compatible output conditioning. The `native` output mode is DSP policy, not native PyTorch inference or a quality-tier claim. See [`examples/quickstart.py`](examples/quickstart.py).
+
+ ## Structured API
+
+ ```python
+-from soprosynth import GenerationConfig, SoproRuntime, SynthesisRequest
++from soprosynth import GenerationConfig, SoproOutputConfig, SoproRuntime, SynthesisRequest
+
+ with SoproRuntime.from_pretrained(
+     model="sopro:v2-turbo",
+@@ -81,39 +77,53 @@ with SoproRuntime.from_pretrained(
+         request,
+         voice=voice,
+         config=GenerationConfig(temperature=0.8, top_p=0.9, top_k=40),
++        output=SoproOutputConfig(mode="native"),
+     )
+ ```
+
+-`SynthesisRequest` requires a stable ID and a non-empty text value. Supported language IDs are `en`, `pt`, `fr`, `de`, and `auto` (or `None` where allowed). The caller owns text preparation and segment boundaries.
++`SynthesisRequest` requires a stable ID and non-empty text. SoproSynth applies Sopro's upstream-compatible character/sentence segmentation and carries the last configured generated semantic tokens between segments. An installed ONNXVoice runtime that lacks this optional segment contract fails clearly for requests that need multiple segments.
+
+-`runtime.prepare_voice(...)` normalizes and prepares a reference recording for the open runtime. Reuse the resulting `PreparedVoice` only with that same runtime; prepared voice state is not portable across runtimes, model revisions, or processes. `runtime.measure_request(request)` uses ONNXVoice text preparation to report the token count.
++`runtime.prepare_voice(...)` forwards clean mono float32 reference samples at their original sample rate by default; ONNXVoice owns Sopro reference preprocessing. Explicit `resampler="linear"` or `resampler="audiosig"` selects a legacy SoproSynth-side conversion override. Reuse a `PreparedVoice` only with its creating runtime; its state is not portable across runtimes, model revisions, or processes. `runtime.measure_request(request)` uses ONNXVoice text preparation to report the token count.
+
+-`request_api_contract().supports_streaming` and `runtime.capabilities.supports_streaming` are both `False`. Runtime capabilities report request measurement and prepared-voice reuse as supported.
++`request_api_contract().supports_streaming` and `runtime.capabilities.supports_streaming` are both `False`. The request contract reports automatic text boundaries (`caller_owns_text_boundaries=False`) and support for the native/raw output policy.
+
+ ## CLI
+
+-```bash
++````bash
+ soprosynth speak "Hello from SoproSynth." \
+   --ref reference.wav \
+   --out speech.wav \
+   --model sopro:v2-turbo \
+   --profile wasm-uint8 \
+-  --provider cpu
++  --provider cpu \
++  --output-mode native
+
++soprosynth speak "Hello from SoproSynth." --ref reference.wav --output-mode raw
+ soprosynth discover [--offline] [--refresh] [--cache-dir PATH]
+ soprosynth info
+ soprosynth inspect EXPORT_DIRECTORY --profile wasm-uint8
+-```
+
+-`speak` accepts language, generation controls, and optional voice-level calibration controls. `discover` queries ONNXVoice catalog metadata. `inspect` is a developer diagnostic for a compatible local export; it opens a runtime session but does not synthesize.
++`speak` accepts language, generation controls, `--output-mode native|raw`, and optional voice-level calibration controls. `native` is the default. `discover` queries ONNXVoice catalog metadata. `inspect` is a developer diagnostic for a compatible local export; it opens a runtime session but does not synthesize.
++
++## Native/raw output policy
++
++`SoproOutputConfig()` defaults to `mode="native"`. It derives gain from ONNXVoice's prepared reference-level metadata (target `-23 dB`; no integrated-LUFS estimate). Trimming keeps 80 ms of first-segment lead, uses 300 ms of later lead with a 100 ms skip, and keeps 300 ms of trailing audio per segment. Joins use 10 ms edge fades, followed by the `0.9` soft limiter and an 80 ms final fade. Native mode requires finite `PreparedVoice.metadata["reference_level_db"]`; missing metadata raises a clear capability error.
++
++`SoproOutputConfig(mode="raw")` concatenates unconditioned ONNX vocoder segment waveforms without native gain, trimming, fades, or limiting. Long requests still use Sopro-compatible segmentation and semantic-token carry. Optional voice-level calibration can still be applied afterward. Output-policy measurements are reported under `metadata["sopro_output"]`.
++
++Optional `VoiceLevelConfig(mode="calibrated")` is a separate layer applied after the selected output mode. It defaults off, is reported under `metadata["voice_level_application"]`, and is not part of Sopro's reference-relative gain policy.
+
+ ## Voice-level calibration
+
+ Voice-level processing is opt-in through `VoiceLevelConfig`. The packaged calibration catalog is empty because no measured corpus was supplied. In calibrated mode, a gain is used only for an exact ONNX model, immutable source revision, and profile. If there is no exact record, the result reports `source="missing_calibration"` and leaves the audio unchanged. A caller may instead provide an explicit static `gain_db` override; this applies linear gain without measuring or clipping the in-memory result.
+
+-Build a reviewable calibration record from licensed PCM WAVs with the optional `soprosynth[audio]` extra and `soprosynth-build-calibration`. The command requires `--model-id`, immutable `--revision`, `--profile`, corpus/license/provenance metadata, explicit loudness/true-peak policy, and `--i-have-rights`. It writes an external reviewable catalog and does not modify the packaged catalog.
++Build a reviewable calibration record from licensed PCM WAVs with the declared AudioSig dependency and `soprosynth-build-calibration`. The command requires `--model-id`, immutable `--revision`, `--profile`, corpus/license/provenance metadata, explicit loudness/true-peak policy, and `--i-have-rights`. It writes an external reviewable catalog and does not modify the packaged catalog.
+
+-Reference-rate conversion uses dependency-free linear interpolation by default. To opt into anti-aliased resampling, install the audio extra and call `runtime.prepare_voice(reference, resampler="audiosig")`.
++AudioSig is a required core dependency and supplies the Sopro-compatible gain, boundary, fade, join, and limiter operations. The default reference path does not pre-resample; explicitly select legacy model-rate conversion with `runtime.prepare_voice(reference, resampler="linear")` or `resampler="audiosig"`.
++
++## Reference-rate and model-quality boundary
++
++Only the portable `wasm-uint8` profile is currently accepted by the Python runtime; it is quantized and is not native-PyTorch-equivalent. `cpu-fp32` remains unsupported until upstream exports, pinned graph artifacts, and direct fp32 oracle outputs are available. A licensed native-versus-ONNX listening corpus is also an external release dependency. Unit tests and portable graph goldens do not satisfy those quality gates; SoproSynth makes no native-quality or full-parity claim.
+
+ ## Discovery and runtime identity
+
+@@ -140,6 +150,6 @@ python -m pip install -e ".[cpu,dev]"
+ python -m pytest -q
+ ruff check .
+ python -m build
+-```
++````
+
+ SoproSynth source code is licensed under Apache-2.0. Pretrained model assets and reference recordings are separate resources governed by their own licenses and usage terms.
+diff --git a/examples/README.md b/examples/README.md
+index ef3f74c..fcfbec8 100644
+--- a/examples/README.md
++++ b/examples/README.md
+@@ -15,9 +15,13 @@ provider: CPUExecutionProvider (cpu)
+ languages: en, pt, fr, de, auto
+ output: mono float32 PCM at 24 kHz
+ reference voice: required
++output mode: native-compatible conditioning by default; raw is opt-in
++reference samples: forwarded at their original rate by default
++model-quality claim: `wasm-uint8` is quantized; no native-PyTorch parity claim
+ streaming: not supported
+ ```
+
++SoproSynth has no runtime dependency on the native `sopro` Python package. It segments long text and carries semantic tokens between segments when the installed ONNXVoice runtime exposes that contract. The `native` output name describes DSP conditioning only; it does not describe the model's quality tier.
+ Use only reference recordings whose rights and license permit your intended use. SoproSynth does not grant rights to recordings or generated speech.
+
+ ## Synthesis examples
+diff --git a/pyproject.toml b/pyproject.toml
+index d1f95db..cd0a310 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -9,12 +9,11 @@ description = "Stable Python API for ONNXVoice's Sopro V2 Turbo runtime"
+ readme = "README.md"
+ requires-python = ">=3.10"
+ license = "Apache-2.0"
+-dependencies = ["numpy>=1.23"]
++dependencies = ["numpy>=1.23", "audiosig>=0.1.8,<0.2"]
+ keywords = ["sopro", "tts", "onnx", "onnxvoice"]
+
+ [project.optional-dependencies]
+ cpu = ["onnxvoice[cpu]>=0.2.6,<0.3"]
+-audio = ["audiosig>=0.1.7,<0.2"]
+ dev = ["pytest>=8", "build>=1.2", "ruff>=0.8", "setuptools_scm>=8", "twine>=5"]
+
+ [project.scripts]
+diff --git a/soprosynth/__init__.py b/soprosynth/__init__.py
+index 4864bd6..7ce2f34 100644
+--- a/soprosynth/__init__.py
++++ b/soprosynth/__init__.py
+@@ -14,6 +14,8 @@ from .api import SoproRuntime
+ from .api_contract import REQUEST_API_VERSION, RequestApiContract, request_api_contract
+ from .config import (
+     GenerationConfig,
++    SoproOutputConfig,
++    SoproOutputMode,
+     VoiceLevelApplication,
+     VoiceLevelConfig,
+     VoiceLevelMode,
+@@ -79,6 +81,8 @@ __all__ = [
+     "RuntimeClosedError",
+     "RuntimeDiagnostics",
+     "SessionCreationError",
++    "SoproOutputConfig",
++    "SoproOutputMode",
+     "SoproRuntime",
+     "SoproSynthError",
+     "SynthesisRequest",
+diff --git a/soprosynth/__main__.py b/soprosynth/__main__.py
+index 9a3e837..cb16de1 100644
+--- a/soprosynth/__main__.py
++++ b/soprosynth/__main__.py
+@@ -11,7 +11,7 @@ from typing import Any
+
+ from . import __version__, discover_bundles, request_api_contract, runtime_identity
+ from .api import SoproRuntime
+-from .config import GenerationConfig, VoiceLevelConfig
++from .config import GenerationConfig, SoproOutputConfig, VoiceLevelConfig
+
+
+ def _json_value(value: Any) -> Any:
+@@ -42,6 +42,8 @@ def _contract_summary() -> dict[str, Any]:
+         "measurement_method": contract.measurement_method,
+         "supports_reference_voice": contract.supports_reference_voice,
+         "supports_voice_level": contract.supports_voice_level,
++        "supports_sopro_output_policy": contract.supports_sopro_output_policy,
++        "caller_owns_text_boundaries": contract.caller_owns_text_boundaries,
+         "supports_request_measurement": contract.supports_request_measurement,
+         "supports_streaming": contract.supports_streaming,
+         "supports_word_timings": contract.supports_word_timings,
+@@ -57,13 +59,19 @@ def _build_parser() -> argparse.ArgumentParser:
+     subparsers = parser.add_subparsers(dest="command", required=True)
+
+     speak = subparsers.add_parser("speak", help="synthesize speech")
+-    speak.add_argument("text", help="text for one atomic synthesis request")
++    speak.add_argument("text", help="text to synthesize")
+     speak.add_argument("--ref", required=True, help="reference voice WAV path")
+     speak.add_argument("--out", default="out.wav", help="output mono PCM16 WAV path")
+     speak.add_argument("--language", choices=("en", "pt", "fr", "de", "auto"))
+     speak.add_argument("--model", default="sopro:v2-turbo")
+     speak.add_argument("--profile", default="wasm-uint8")
+     speak.add_argument("--provider", choices=("cpu",), default="cpu")
++    speak.add_argument(
++        "--output-mode",
++        choices=("native", "raw"),
++        default="native",
++        help="Sopro-compatible output conditioning or raw ONNX waveform",
++    )
+     speak.add_argument("--temperature", type=float)
+     speak.add_argument("--top-p", type=float)
+     speak.add_argument("--top-k", type=int)
+@@ -105,6 +113,7 @@ def _speak(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+         min_seconds=args.min_seconds,
+     )
+     voice_level = VoiceLevelConfig(mode=args.voice_level, gain_db=args.gain_db)
++    output_config = SoproOutputConfig(mode=args.output_mode)
+     with SoproRuntime.from_pretrained(
+         model=args.model,
+         profile=args.profile,
+@@ -117,12 +126,16 @@ def _speak(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+             language=args.language,
+             config=config,
+             voice_level=voice_level,
++            output=output_config,
++        )
++        output_path = result.save_wav(args.out)
++        print(output_path)
++        _print_json(
++            {
++                "sopro_output": result.metadata.get("sopro_output"),
++                "voice_level_application": result.metadata.get("voice_level_application"),
++            }
+         )
+-        output = result.save_wav(args.out)
+-        print(output)
+-        application = result.metadata.get("voice_level_application")
+-        if application is not None:
+-            _print_json({"voice_level_application": application})
+     return 0
+
+
+diff --git a/soprosynth/_onnxvoice.py b/soprosynth/_onnxvoice.py
+index 58f3121..18a0a67 100644
+--- a/soprosynth/_onnxvoice.py
++++ b/soprosynth/_onnxvoice.py
+@@ -4,8 +4,11 @@ from __future__ import annotations
+
+ import importlib
+ import json
++import math
+ import posixpath
+ from collections.abc import Callable, Mapping, Sequence
++from dataclasses import dataclass
++from numbers import Integral, Real
+ from pathlib import Path, PurePosixPath
+ from types import MappingProxyType
+ from typing import Any
+@@ -43,6 +46,13 @@ _PROGRESS_FIELDS = (
+ )
+
+
++@dataclass(frozen=True, slots=True)
++class SoproSegmentResult:
++    audio: np.ndarray
++    semantic_tokens: tuple[int, ...] | None
++    prompt_token_limit: int | None
++
++
+ def normalize_ref(ref: str) -> str:
+     """Normalize a catalog model name to ONNXVoice's canonical ``sopro:`` form."""
+     if not isinstance(ref, str) or not ref.strip():
+@@ -401,12 +411,51 @@ class OnnxVoiceBackend:
+             or installation_metadata.get("source_revision")
+         )
+
++    @property
++    def max_segment_chars(self) -> int:
++        """Return the bundle's segment limit, using Sopro's upstream default."""
++        manifest = getattr(self._engine, "manifest", {}) or {}
++        config = manifest.get("config") if isinstance(manifest, Mapping) else None
++        generation = config.get("generation") if isinstance(config, Mapping) else None
++        value = generation.get("max_segment_chars") if isinstance(generation, Mapping) else None
++        if value is None:
++            return 300
++        if type(value) is not int or value < 1:
++            raise UnsupportedBundleError("Sopro max_segment_chars must be a positive integer")
++        return value
++
++    @property
++    def token_samples(self) -> int:
++        """Return the configured semantic-token audio span for empty output fallback."""
++        manifest = getattr(self._engine, "manifest", {}) or {}
++        value = manifest.get("tokenSamples") if isinstance(manifest, Mapping) else None
++        if value is None:
++            return 1024
++        if type(value) is not int or value < 1:
++            raise UnsupportedBundleError("Sopro tokenSamples must be a positive integer")
++        return value
++
+     def prepare_reference(self, reference: ReferenceAudio) -> Any:
+         try:
+             return self._engine.prepare_voice(reference.audio, sample_rate=reference.sample_rate)
+         except Exception as exc:
+             raise _map_backend_error(exc, "prepare") from exc
+
++    @staticmethod
++    def reference_level_db(state: Any) -> float | None:
++        """Return only a finite scalar level from an ONNXVoice reference state."""
++        if isinstance(state, Mapping):
++            value = state.get("level_db")
++        else:
++            value = getattr(state, "level_db", None)
++        if isinstance(value, bool) or not isinstance(value, Real):
++            return None
++        try:
++            level_db = float(value)
++        except (OverflowError, TypeError, ValueError):
++            return None
++        return level_db if math.isfinite(level_db) else None
++
+     def measure_text(self, text: str, language: str | None = None) -> int:
+         try:
+             prepared = self._engine.prepare_text(text, language=language)
+@@ -431,6 +480,86 @@ class OnnxVoiceBackend:
+             raise _map_backend_error(exc, "inference") from exc
+         return result.audio
+
++    def synthesize_segment(self, text: str, **kwargs: Any) -> SoproSegmentResult:
++        """Infer one text segment and expose the optional semantic-carry contract."""
++        state = kwargs.pop("ref", None)
++        language = kwargs.pop("lang", None)
++        prompt_tokens = kwargs.pop("prompt_tokens", None)
++        if state is None:
++            raise InvalidVoiceError("ONNX Sopro synthesis requires a prepared reference voice")
++        try:
++            text_input = self._engine.prepare_text(text, language=language)
++            infer_kwargs = dict(kwargs)
++            if prompt_tokens is not None:
++                infer_kwargs["prompt_tokens"] = prompt_tokens
++            result = self._engine.infer(
++                text_input.token_ids,
++                voice_state=state,
++                language=text_input.language,
++                **infer_kwargs,
++            )
++        except Exception as exc:
++            mapped = _map_backend_error(exc, "inference")
++            unsupported_override = isinstance(mapped, RuntimeCapabilityError) or (
++                isinstance(exc, TypeError) and "prompt_tokens" in str(exc)
++            )
++            if prompt_tokens is not None and unsupported_override:
++                raise RuntimeCapabilityError(
++                    "The installed ONNXVoice runtime does not support Sopro semantic prompt carry; "
++                    "upgrade ONNXVoice to a version exposing prompt_tokens inference"
++                ) from exc
++            raise mapped from exc
++
++        try:
++            audio = np.asarray(result.audio, dtype=np.float32)
++        except (AttributeError, TypeError, ValueError, OverflowError) as exc:
++            raise ModelInferenceError("ONNXVoice returned invalid Sopro segment audio") from exc
++        if audio.ndim != 1 or not np.isfinite(audio).all():
++            raise ModelInferenceError("ONNXVoice returned invalid mono Sopro segment audio")
++
++        metadata = getattr(result, "metadata", {})
++        if not isinstance(metadata, Mapping):
++            metadata = {}
++        semantic_tokens: tuple[int, ...] | None = None
++        raw_tokens = metadata.get("generated_semantic_tokens")
++        if raw_tokens is not None:
++            if isinstance(raw_tokens, np.ndarray):
++                if raw_tokens.ndim != 1:
++                    raise RuntimeCapabilityError(
++                        "ONNXVoice generated_semantic_tokens must be one-dimensional"
++                    )
++                raw_tokens = raw_tokens.tolist()
++            if isinstance(raw_tokens, (str, bytes)) or not isinstance(raw_tokens, Sequence):
++                raise RuntimeCapabilityError(
++                    "ONNXVoice generated_semantic_tokens must be an integer sequence"
++                )
++            if any(
++                isinstance(token, (bool, np.bool_)) or not isinstance(token, Integral) or token < 0
++                for token in raw_tokens
++            ):
++                raise RuntimeCapabilityError(
++                    "ONNXVoice generated_semantic_tokens must contain non-negative integers"
++                )
++            semantic_tokens = tuple(int(token) for token in raw_tokens)
++
++        prompt_limit: int | None = None
++        raw_limit = metadata.get("prompt_token_limit")
++        if raw_limit is not None:
++            if (
++                isinstance(raw_limit, (bool, np.bool_))
++                or not isinstance(raw_limit, Integral)
++                or raw_limit < 0
++            ):
++                raise RuntimeCapabilityError(
++                    "ONNXVoice prompt_token_limit must be a non-negative integer"
++                )
++            prompt_limit = int(raw_limit)
++        return SoproSegmentResult(
++            audio=np.ascontiguousarray(audio),
++            semantic_tokens=semantic_tokens,
++            prompt_token_limit=prompt_limit,
++        )
++
+     def diagnostics(self) -> PublicRuntimeDiagnostics:
+         try:
+             raw = self._engine.diagnostics()
+diff --git a/soprosynth/api.py b/soprosynth/api.py
+index fedc7d8..2755b51 100644
+--- a/soprosynth/api.py
++++ b/soprosynth/api.py
+@@ -2,14 +2,17 @@
+
+ from __future__ import annotations
+
++import math
+ import uuid
++from collections.abc import Mapping, Sequence
+ from dataclasses import asdict
++from numbers import Integral, Real
+ from pathlib import Path
+ from typing import Any, Literal
+
+ import numpy as np
+
+-from .config import GenerationConfig, VoiceLevelConfig
++from .config import GenerationConfig, SoproOutputConfig, VoiceLevelConfig
+ from .errors import (
+     EmptyTextError,
+     InvalidGenerationConfigError,
+@@ -17,10 +20,12 @@ from .errors import (
+     InvalidRequestError,
+     InvalidVoiceError,
+     ModelInferenceError,
++    RuntimeCapabilityError,
+     RuntimeClosedError,
+     SoproSynthError,
+     UnsupportedFeatureError,
+ )
++from .postprocess import DEFAULT_MAX_SEGMENT_CHARS, condition_sopro_output, split_text
+ from .types import (
+     LANGUAGES,
+     PreparedVoice,
+@@ -30,7 +35,7 @@ from .types import (
+     SynthesisRequest,
+     SynthesisResult,
+ )
+-from .voice import ReferenceAudio, fingerprint_audio, load_reference_audio
++from .voice import ReferenceAudio, load_reference_audio
+
+
+ class SoproRuntime:
+@@ -171,11 +176,14 @@ class SoproRuntime:
+         self,
+         audio: Any,
+         *,
+-        resampler: Literal["linear", "audiosig"] = "linear",
++        resampler: Literal["linear", "audiosig"] | None = None,
+     ) -> PreparedVoice:
++        """Preserve the source rate by default; explicitly select a legacy model-rate resampler."""
+         self._ensure_open()
+         reference = load_reference_audio(
+-            audio, expected_sample_rate=self.sample_rate, resampler=resampler
++            audio,
++            expected_sample_rate=self.sample_rate if resampler is not None else None,
++            resampler=resampler if resampler is not None else "linear",
+         )
+         if isinstance(reference, PreparedVoice):
+             self._validate_voice(reference)
+@@ -188,16 +196,32 @@ class SoproRuntime:
+             raise
+         except Exception as exc:
+             raise ModelInferenceError("Sopro reference preparation failed") from exc
++
++        prepared_metadata: dict[str, int | float] = {
++            "reference_sample_rate": reference.source_sample_rate,
++            "prepared_reference_sample_rate": reference.sample_rate,
++        }
++        extract_reference_level = getattr(self._engine, "reference_level_db", None)
++        if callable(extract_reference_level):
++            level = extract_reference_level(state)
++            if isinstance(level, Real) and not isinstance(level, bool):
++                try:
++                    finite_level = float(level)
++                except (OverflowError, TypeError, ValueError):
++                    pass
++                else:
++                    if math.isfinite(finite_level):
++                        prepared_metadata["reference_level_db"] = finite_level
+         return PreparedVoice(
+             state=state,
+-            sample_rate=reference.sample_rate,
++            sample_rate=self.sample_rate,
+             source=reference.source,
+             model_id=self.model_id,
+             source_revision=self.source_revision,
+             backend=self.backend,
+             runtime_fingerprint=self._runtime_fingerprint,
+-            fingerprint=fingerprint_audio(reference.audio, reference.sample_rate),
+-            metadata={"reference_sample_rate": reference.sample_rate},
++            fingerprint=reference.source_fingerprint,
++            metadata=prepared_metadata,
+             _owner_id=id(self),
+         )
+
+@@ -253,28 +277,96 @@ class SoproRuntime:
+         voice: PreparedVoice,
+         config: GenerationConfig | None = None,
+         voice_level: VoiceLevelConfig | None = None,
++        output: SoproOutputConfig | None = None,
+     ) -> SynthesisResult:
+         self._ensure_open()
+         self._validate_request(request)
+         if config is not None and not isinstance(config, GenerationConfig):
+             raise InvalidGenerationConfigError("config must be a GenerationConfig")
+         selected_config = config if config is not None else GenerationConfig()
++        if output is not None and not isinstance(output, SoproOutputConfig):
++            raise InvalidGenerationConfigError("output must be a SoproOutputConfig")
++        selected_output = output if output is not None else SoproOutputConfig()
+         if voice_level is not None and not isinstance(voice_level, VoiceLevelConfig):
+             raise InvalidGenerationConfigError("voice_level must be a VoiceLevelConfig")
+         selected_voice_level = voice_level if voice_level is not None else VoiceLevelConfig()
+         self._validate_voice(voice)
+
++        max_segment_chars = getattr(self._engine, "max_segment_chars", DEFAULT_MAX_SEGMENT_CHARS)
++        if max_segment_chars is None:
++            max_segment_chars = DEFAULT_MAX_SEGMENT_CHARS
++        if type(max_segment_chars) is not int or max_segment_chars < 1:
++            raise RuntimeCapabilityError("ONNXVoice must expose a positive Sopro max_segment_chars")
++        text_segments = split_text(request.text, max_segment_chars)
++        if not text_segments:
++            raise EmptyTextError("text must not be empty or whitespace-only")
++
++        segment_infer = getattr(self._engine, "synthesize_segment", None)
++        if len(text_segments) > 1 and not callable(segment_infer):
++            raise RuntimeCapabilityError(
++                "Long-text Sopro synthesis requires ONNXVoice semantic prompt carry; "
++                "upgrade ONNXVoice to a version exposing the segment inference contract"
++            )
++
++        raw_reference_level = voice.metadata.get("reference_level_db")
++        reference_level_db: float | None = None
++        if isinstance(raw_reference_level, Real) and not isinstance(raw_reference_level, bool):
++            try:
++                candidate_level = float(raw_reference_level)
++            except (OverflowError, TypeError, ValueError):
++                candidate_level = float("nan")
++            if math.isfinite(candidate_level):
++                reference_level_db = candidate_level
++        if selected_output.mode == "native" and reference_level_db is None:
++            raise RuntimeCapabilityError(
++                "Native Sopro output requires finite prepared reference_level_db metadata"
++            )
++
+         kwargs: dict[str, Any] = selected_config.as_inference_kwargs()
+         if request.language not in (None, "auto"):
+             kwargs["lang"] = request.language
+         kwargs["ref"] = voice.state
+-        try:
+-            raw_audio = self._engine.synthesize(request.text, **kwargs)
+-        except SoproSynthError:
+-            raise
+-        except Exception as exc:
+-            raise ModelInferenceError("Sopro synthesis failed") from exc
+-        audio = _to_numpy(raw_audio)
++
++        segment_audio: list[np.ndarray] = []
++        carry: tuple[int, ...] | None = None
++        for index, text_segment in enumerate(text_segments):
++            segment_kwargs = dict(kwargs)
++            if carry is not None:
++                segment_kwargs["prompt_tokens"] = carry
++            try:
++                if callable(segment_infer):
++                    inferred = segment_infer(text_segment, **segment_kwargs)
++                    raw_audio, semantic_tokens, prompt_limit = _segment_result_parts(inferred)
++                else:
++                    raw_audio = self._engine.synthesize(text_segment, **segment_kwargs)
++                    semantic_tokens = None
++                    prompt_limit = None
++                segment_audio.append(_to_numpy(raw_audio))
++            except SoproSynthError:
++                raise
++            except Exception as exc:
++                raise ModelInferenceError("Sopro synthesis failed") from exc
++
++            if index + 1 < len(text_segments):
++                if semantic_tokens is None or prompt_limit is None:
++                    raise RuntimeCapabilityError(
++                        "Long-text Sopro synthesis requires ONNXVoice generated semantic tokens "
++                        "and prompt_token_limit metadata; upgrade ONNXVoice"
++                    )
++                if semantic_tokens and prompt_limit > 0:
++                    carry = tuple(semantic_tokens[-prompt_limit:])
++
++        empty_audio_samples = (
++            getattr(self._engine, "token_samples", 1024) if selected_output.mode == "native" else 0
++        )
++        audio, sopro_output_metadata = condition_sopro_output(
++            segment_audio,
++            sample_rate=self.sample_rate,
++            mode=selected_output.mode,
++            reference_level_db=reference_level_db,
++            empty_audio_samples=empty_audio_samples,
++        )
++        sopro_output_metadata["text_segment_count"] = len(text_segments)
+         from .calibration import apply_voice_level_calibration, load_calibration_catalog
+
+         calibration_catalog = (
+@@ -320,6 +412,8 @@ class SoproRuntime:
+                 "voice_identity": dict(voice.identity),
+                 "language": request.language or "auto",
+                 "generation_config": asdict(selected_config),
++                "sopro_output_config": asdict(selected_output),
++                "sopro_output": sopro_output_metadata,
+                 "effective_generation": None,
+                 "voice_level_config": asdict(selected_voice_level),
+                 "voice_level_application": asdict(voice_level_application),
+@@ -337,13 +431,16 @@ class SoproRuntime:
+         language: str | None = None,
+         config: GenerationConfig | None = None,
+         voice_level: VoiceLevelConfig | None = None,
++        output: SoproOutputConfig | None = None,
+     ) -> SynthesisResult:
+         self._ensure_open()
+         request = SynthesisRequest(id=id, text=text, language=language)
+         if not request.text.strip():
+             raise EmptyTextError("text must not be empty or whitespace-only")
+         prepared = voice if isinstance(voice, PreparedVoice) else self.prepare_voice(voice)
+-        return self.synthesize(request, voice=prepared, config=config, voice_level=voice_level)
++        return self.synthesize(
++            request, voice=prepared, config=config, voice_level=voice_level, output=output
++        )
+
+     @property
+     def capabilities(self) -> RuntimeCapabilities:
+@@ -388,6 +485,51 @@ def _to_numpy(value: Any) -> np.ndarray:
+     if hasattr(value, "detach"):
+         value = value.detach().cpu().numpy()
+     try:
+-        return np.asarray(value, dtype=np.float32)
++        audio = np.asarray(value, dtype=np.float32)
+     except (TypeError, ValueError, OverflowError) as exc:
+         raise ModelInferenceError("Backend returned an invalid audio value") from exc
++    if audio.ndim != 1 or not np.isfinite(audio).all():
++        raise ModelInferenceError("Backend returned invalid mono audio")
++    return np.ascontiguousarray(audio)
++
++
++def _segment_result_parts(result: Any) -> tuple[Any, tuple[int, ...] | None, int | None]:
++    raw_audio = getattr(result, "audio", result)
++    semantic_tokens = getattr(result, "semantic_tokens", None)
++    prompt_limit = getattr(result, "prompt_token_limit", None)
++    metadata = getattr(result, "metadata", None)
++    if isinstance(metadata, Mapping):
++        if semantic_tokens is None:
++            semantic_tokens = metadata.get("generated_semantic_tokens")
++        if prompt_limit is None:
++            prompt_limit = metadata.get("prompt_token_limit")
++
++    if semantic_tokens is not None:
++        if isinstance(semantic_tokens, np.ndarray):
++            if semantic_tokens.ndim != 1:
++                raise RuntimeCapabilityError(
++                    "ONNXVoice generated semantic tokens must be one-dimensional"
++                )
++            semantic_tokens = semantic_tokens.tolist()
++        if isinstance(semantic_tokens, (str, bytes)) or not isinstance(semantic_tokens, Sequence):
++            raise RuntimeCapabilityError("ONNXVoice generated semantic tokens must be a sequence")
++        if any(
++            isinstance(token, (bool, np.bool_)) or not isinstance(token, Integral) or token < 0
++            for token in semantic_tokens
++        ):
++            raise RuntimeCapabilityError(
++                "ONNXVoice generated semantic tokens must be non-negative integers"
++            )
++        semantic_tokens = tuple(int(token) for token in semantic_tokens)
++
++    if prompt_limit is not None:
++        if (
++            isinstance(prompt_limit, (bool, np.bool_))
++            or not isinstance(prompt_limit, Integral)
++            or prompt_limit < 0
++        ):
++            raise RuntimeCapabilityError(
++                "ONNXVoice prompt_token_limit must be a non-negative integer"
++            )
++        prompt_limit = int(prompt_limit)
++    return raw_audio, semantic_tokens, prompt_limit
+diff --git a/soprosynth/api_contract.py b/soprosynth/api_contract.py
+index aebc237..e4219ea 100644
+--- a/soprosynth/api_contract.py
++++ b/soprosynth/api_contract.py
+@@ -21,6 +21,7 @@ class RequestApiContract:
+     discovery_method: str
+     runtime_identity_method: str
+     caller_owns_text_boundaries: bool
++    supports_sopro_output_policy: bool
+     supports_linguistic_tokens: bool
+     supports_pronunciation_overrides: bool
+     supports_whole_request_phonemes: bool
+@@ -50,7 +51,7 @@ def request_api_contract() -> RequestApiContract:
+         measurement_method="measure_request",
+         discovery_method="discover_bundles",
+         runtime_identity_method="runtime_identity",
+-        caller_owns_text_boundaries=True,
++        caller_owns_text_boundaries=False,
+         supports_linguistic_tokens=False,
+         supports_pronunciation_overrides=False,
+         supports_whole_request_phonemes=False,
+@@ -59,6 +60,7 @@ def request_api_contract() -> RequestApiContract:
+         supports_managed_reference_voice=False,
+         supports_word_timings=False,
+         supports_voice_level=True,
++        supports_sopro_output_policy=True,
+         supports_request_measurement=True,
+         supports_streaming=False,
+     )
+diff --git a/soprosynth/calibration_builder.py b/soprosynth/calibration_builder.py
+index beb9aec..8491693 100644
+--- a/soprosynth/calibration_builder.py
++++ b/soprosynth/calibration_builder.py
+@@ -171,14 +171,14 @@ def build_calibration_record(
+ def measure_audio_files(
+     paths: Sequence[str | Path],
+ ) -> tuple[list[float], list[float], list[float], list[int], list[float], list[str], str]:
+-    """Measure licensed PCM WAVs with audiosig, importing the optional extra lazily."""
++    """Measure licensed PCM WAVs with audiosig, importing the required dependency lazily."""
+     if len(paths) == 0:
+         raise ValueError("at least one licensed PCM WAV is required")
+     try:
+         import audiosig
+     except ImportError as exc:
+         raise OptionalDependencyError(
+-            "Measured calibration requires audiosig; install 'soprosynth[audio]'"
++            "Measured calibration requires the declared AudioSig dependency (>=0.1.8,<0.2)"
+         ) from exc
+
+     loudnesses: list[float] = []
+diff --git a/soprosynth/config.py b/soprosynth/config.py
+index 71e8e37..d54c5af 100644
+--- a/soprosynth/config.py
++++ b/soprosynth/config.py
+@@ -73,6 +73,20 @@ class GenerationConfig:
+         }
+
+
++SoproOutputMode = Literal["native", "raw"]
++
++
++@dataclass(frozen=True, slots=True)
++class SoproOutputConfig:
++    """Select native-compatible Sopro conditioning or unmodified ONNX audio."""
++
++    mode: SoproOutputMode = "native"
++
++    def __post_init__(self) -> None:
++        if not isinstance(self.mode, str) or self.mode not in ("native", "raw"):
++            raise InvalidGenerationConfigError("Sopro output mode must be 'native' or 'raw'")
++
++
+ @dataclass(frozen=True, slots=True)
+ class VoiceLevelConfig:
+     """Opt-in static gain policy; no waveform analysis is performed."""
+diff --git a/soprosynth/errors.py b/soprosynth/errors.py
+index 6c6c666..b7928c7 100644
+--- a/soprosynth/errors.py
++++ b/soprosynth/errors.py
+@@ -8,7 +8,7 @@ class SoproSynthError(Exception):
+
+
+ class OptionalDependencyError(SoproSynthError):
+-    """An optional dependency is not installed."""
++    """A declared optional or core dependency is not installed."""
+
+
+ class InvalidRequestError(SoproSynthError):
+diff --git a/soprosynth/postprocess.py b/soprosynth/postprocess.py
+new file mode 100644
+index 0000000..f0613c2
+--- /dev/null
++++ b/soprosynth/postprocess.py
+@@ -0,0 +1,188 @@
++"""Upstream-compatible Sopro text segmentation and output conditioning."""
++
++from __future__ import annotations
++
++import math
++import re
++from collections.abc import Sequence
++from numbers import Real
++from typing import Any
++
++import numpy as np
++
++from .errors import ModelInferenceError, RuntimeCapabilityError
++
++DEFAULT_MAX_SEGMENT_CHARS = 300
++OUTPUT_TARGET_LEVEL_DB = -23.0
++LIMITER_KNEE = 0.9
++LEAD_IN_SECONDS = 0.08
++SEGMENT_LEAD_SECONDS = 0.30
++SEGMENT_SKIP_SECONDS = 0.10
++TRAIL_SECONDS = 0.30
++JOIN_FADE_SECONDS = 0.01
++FINAL_FADE_SECONDS = 0.08
++
++_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
++_CLAUSE_END = re.compile(r"(?<=[,;:])\s+")
++
++
++def _pack(parts: Sequence[str], max_chars: int) -> list[str]:
++    packed: list[str] = []
++    current = ""
++    for part in parts:
++        if not current:
++            current = part
++        elif len(current) + 1 + len(part) <= max_chars:
++            current = f"{current} {part}"
++        else:
++            packed.append(current)
++            current = part
++    if current:
++        packed.append(current)
++    return packed
++
++
++def split_text(text: str, max_segment_chars: int = DEFAULT_MAX_SEGMENT_CHARS) -> tuple[str, ...]:
++    """Split text like Sopro's offline ``split_text`` without a native dependency."""
++    if not isinstance(text, str):
++        raise TypeError("text must be a string")
++    if type(max_segment_chars) is not int or max_segment_chars < 1:
++        raise ValueError("max_segment_chars must be a positive integer")
++
++    normalized = " ".join(text.split())
++    if len(normalized) <= max_segment_chars:
++        return (normalized,) if normalized else ()
++
++    segments: list[str] = []
++    for sentence in _pack(_SENTENCE_END.split(normalized), max_segment_chars):
++        if len(sentence) <= max_segment_chars:
++            segments.append(sentence)
++            continue
++        for clause in _pack(_CLAUSE_END.split(sentence), max_segment_chars):
++            if len(clause) <= max_segment_chars:
++                segments.append(clause)
++            else:
++                segments.extend(_pack(clause.split(" "), max_segment_chars))
++    return tuple(segments)
++
++
++def _audio_parts(parts: Sequence[np.ndarray]) -> list[np.ndarray]:
++    if isinstance(parts, np.ndarray):
++        values: Sequence[np.ndarray] = (parts,)
++    elif not isinstance(parts, (str, bytes)) and isinstance(parts, Sequence):
++        values = parts
++    else:
++        raise ModelInferenceError("Sopro inference returned an invalid segment list")
++    result: list[np.ndarray] = []
++    for part in values:
++        try:
++            audio = np.asarray(part, dtype=np.float32)
++        except (TypeError, ValueError, OverflowError) as exc:
++            raise ModelInferenceError("Sopro inference returned invalid segment audio") from exc
++        if audio.ndim != 1 or not np.isfinite(audio).all():
++            raise ModelInferenceError("Sopro inference returned invalid mono segment audio")
++        if audio.size:
++            result.append(np.ascontiguousarray(audio))
++    return result
++
++
++def condition_sopro_output(
++    parts: Sequence[np.ndarray] | np.ndarray,
++    *,
++    sample_rate: int,
++    mode: str,
++    reference_level_db: Real | None,
++    empty_audio_samples: int = 0,
++) -> tuple[np.ndarray, dict[str, Any]]:
++    """Apply Sopro's native output chain, or concatenate untouched raw segments."""
++    if mode not in ("native", "raw"):
++        raise ValueError("mode must be 'native' or 'raw'")
++    if type(sample_rate) is not int or sample_rate <= 0:
++        raise ValueError("sample_rate must be a positive integer")
++    if type(empty_audio_samples) is not int or empty_audio_samples < 0:
++        raise ValueError("empty_audio_samples must be a non-negative integer")
++
++    source_parts = _audio_parts(parts)
++    level: float | None = None
++    if isinstance(reference_level_db, Real) and not isinstance(reference_level_db, bool):
++        candidate = float(reference_level_db)
++        if math.isfinite(candidate):
++            level = candidate
++
++    metadata: dict[str, Any] = {
++        "mode": mode,
++        "reference_level_db": level,
++        "target_level_db": None,
++        "gain_db": None,
++        "trimmed_lead_samples": 0,
++        "trimmed_trail_samples": 0,
++        "limiter_applied": False,
++        "limited": False,
++        "segment_count": len(source_parts),
++    }
++    if mode == "raw":
++        audio = np.concatenate(source_parts) if source_parts else np.empty(0, dtype=np.float32)
++        return np.ascontiguousarray(audio, dtype=np.float32), metadata
++
++    if level is None:
++        raise RuntimeCapabilityError(
++            "Native Sopro output requires finite prepared reference_level_db metadata"
++        )
++
++    gain_db = OUTPUT_TARGET_LEVEL_DB - level
++    if not math.isfinite(gain_db):
++        raise RuntimeCapabilityError(
++            "Prepared reference level produces a non-finite Sopro output gain"
++        )
++    metadata["target_level_db"] = OUTPUT_TARGET_LEVEL_DB
++    metadata["gain_db"] = gain_db
++    metadata["limiter_applied"] = bool(source_parts)
++    if not source_parts:
++        return np.zeros(empty_audio_samples, dtype=np.float32), metadata
++
++    from audiosig import (
++        apply_gain_db,
++        fade_edges,
++        join_with_edge_fades,
++        soft_limit,
++        trim_lead,
++        trim_trail,
++    )
++
++    trimmed_parts: list[np.ndarray] = []
++    trimmed_lead_samples = 0
++    trimmed_trail_samples = 0
++    for index, part in enumerate(source_parts):
++        gained = apply_gain_db(part, gain_db)
++        leading = trim_lead(
++            gained,
++            sample_rate=sample_rate,
++            lead_seconds=LEAD_IN_SECONDS if index == 0 else SEGMENT_LEAD_SECONDS,
++            skip_seconds=0.0 if index == 0 else SEGMENT_SKIP_SECONDS,
++        )
++        trailing = trim_trail(
++            leading,
++            sample_rate=sample_rate,
++            trail_seconds=TRAIL_SECONDS,
++        )
++        trimmed_lead_samples += int(gained.size - leading.size)
++        trimmed_trail_samples += int(leading.size - trailing.size)
++        trimmed_parts.append(trailing)
++
++    joined = join_with_edge_fades(
++        trimmed_parts,
++        sample_rate=sample_rate,
++        fade_seconds=JOIN_FADE_SECONDS,
++    )
++    limited = soft_limit(joined, knee=LIMITER_KNEE)
++    metadata["trimmed_lead_samples"] = trimmed_lead_samples
++    metadata["trimmed_trail_samples"] = trimmed_trail_samples
++    metadata["limited"] = bool(np.any(limited != joined))
++    output = fade_edges(
++        limited,
++        sample_rate=sample_rate,
++        fade_in=False,
++        fade_out=True,
++        fade_seconds=FINAL_FADE_SECONDS,
++    )
++    return np.ascontiguousarray(output, dtype=np.float32), metadata
+diff --git a/soprosynth/voice.py b/soprosynth/voice.py
+index d24ceb6..8724014 100644
+--- a/soprosynth/voice.py
++++ b/soprosynth/voice.py
+@@ -18,6 +18,8 @@ from .types import PreparedVoice
+ class ReferenceAudio:
+     audio: np.ndarray
+     sample_rate: int
++    source_sample_rate: int
++    source_fingerprint: str
+     source: str | None = None
+
+
+@@ -34,7 +36,7 @@ def _resample_audio(
+         from audiosig import resample
+     except ImportError as exc:
+         raise OptionalDependencyError(
+-            "Anti-aliased reference resampling requires audiosig; install 'soprosynth[audio]'"
++            "Anti-aliased reference resampling requires the declared AudioSig dependency (>=0.1.8,<0.2)"
+         ) from exc
+     result = resample(audio, source_rate=source_rate, target_rate=target_rate)
+     return np.ascontiguousarray(result, dtype=np.float32)
+@@ -114,7 +116,15 @@ def load_reference_audio(
+         )
+     if type(sample_rate) is not int or sample_rate <= 0:
+         raise InvalidVoiceError("reference sample rate must be a positive integer")
++    source_sample_rate = sample_rate
++    source_fingerprint = fingerprint_audio(audio, source_sample_rate)
+     if expected_sample_rate is not None and sample_rate != expected_sample_rate:
+         audio = _resample_audio(audio, sample_rate, expected_sample_rate, method=resampler)
+         sample_rate = expected_sample_rate
+-    return ReferenceAudio(audio=audio, sample_rate=sample_rate, source=source_path)
++    return ReferenceAudio(
++        audio=audio,
++        sample_rate=sample_rate,
++        source_sample_rate=source_sample_rate,
++        source_fingerprint=source_fingerprint,
++        source=source_path,
++    )
+diff --git a/tests/test_api.py b/tests/test_api.py
+index 6ee6d48..ab43a23 100644
+--- a/tests/test_api.py
++++ b/tests/test_api.py
+@@ -20,6 +20,7 @@ from soprosynth.errors import (
+     InvalidVoiceError,
+     RuntimeClosedError,
+ )
++from soprosynth.voice import fingerprint_audio
+
+
+ def test_validation():
+@@ -66,6 +67,9 @@ class FakeEngine:
+         self.prepared.append(reference)
+         return {"voice": len(self.prepared)}
+
++    def reference_level_db(self, state):
++        return -23.0
++
+     def measure_text(self, text, language=None):
+         self.measured.append((text, language))
+         return 2
+@@ -127,6 +131,53 @@ def test_from_pretrained_routes_to_onnxvoice_with_canonical_defaults(monkeypatch
+         runtime.prepare_voice((np.array([0.1], dtype=np.float32), 24000))
+
+
++@pytest.mark.parametrize("sample_rate", [16000, 44100, 48000])
++def test_prepare_voice_preserves_source_rate_and_runtime_identity(sample_rate):
++    engine = FakeEngine()
++    runtime = SoproRuntime(engine)
++    audio = np.array([0.1, -0.1], dtype=np.float32)
++
++    voice = runtime.prepare_voice((audio, sample_rate))
++    reference = engine.prepared[0]
++
++    assert reference.sample_rate == sample_rate
++    assert reference.audio.dtype == np.float32 and reference.audio.flags.c_contiguous
++    assert np.array_equal(reference.audio, audio)
++    assert voice.sample_rate == runtime.sample_rate == 24000
++    assert voice.identity["sample_rate"] == 24000
++    assert voice.fingerprint == fingerprint_audio(audio, sample_rate)
++    assert voice.metadata == {
++        "reference_sample_rate": sample_rate,
++        "prepared_reference_sample_rate": sample_rate,
++        "reference_level_db": -23.0,
++    }
++    result = runtime.synthesize(
++        SynthesisRequest("source-rate", "hello", language="de"), voice=voice
++    )
++    assert result.sample_rate == 24000
++    runtime.close()
++
++
++def test_explicit_legacy_resampling_preserves_source_identity():
++    engine = FakeEngine()
++    runtime = SoproRuntime(engine)
++    audio = np.array([0.1, -0.1, 0.25, -0.25, 0.4, -0.4, 0.5, -0.5], dtype=np.float32)
++
++    voice = runtime.prepare_voice((audio, 48000), resampler="linear")
++    reference = engine.prepared[0]
++
++    assert reference.sample_rate == 24000
++    assert reference.audio.size == 4
++    assert voice.sample_rate == 24000
++    assert voice.fingerprint == fingerprint_audio(audio, 48000)
++    assert voice.metadata == {
++        "reference_sample_rate": 48000,
++        "prepared_reference_sample_rate": 24000,
++        "reference_level_db": -23.0,
++    }
++    runtime.close()
++
++
+ def test_public_api_has_only_onnxvoice_runtime_controls():
+     runtime_params = inspect.signature(SoproRuntime.from_pretrained).parameters
+     assert set(runtime_params) == {
+diff --git a/tests/test_api_contract.py b/tests/test_api_contract.py
+index ca1e855..ed6ce51 100644
+--- a/tests/test_api_contract.py
++++ b/tests/test_api_contract.py
+@@ -20,7 +20,8 @@ def test_v1_request_contract():
+     assert contract.measurement_method == "measure_request"
+     assert contract.discovery_method == "discover_bundles"
+     assert contract.runtime_identity_method == "runtime_identity"
+-    assert contract.caller_owns_text_boundaries is True
++    assert contract.caller_owns_text_boundaries is False
++    assert contract.supports_sopro_output_policy is True
+     assert contract.supports_reference_voice is True
+     assert contract.supports_request_measurement is True
+     assert contract.supports_streaming is False
+diff --git a/tests/test_calibration.py b/tests/test_calibration.py
+index 2b07e0b..a706d1a 100644
+--- a/tests/test_calibration.py
++++ b/tests/test_calibration.py
+@@ -161,6 +161,9 @@ class _FakeEngine:
+     def prepare_reference(self, reference):
+         return {"prepared": True}
+
++    def reference_level_db(self, state):
++        return -23.0
++
+     def synthesize(self, text, **kwargs):
+         return np.array([0.75, -0.75], dtype=np.float32)
+
+diff --git a/tests/test_calibration_builder.py b/tests/test_calibration_builder.py
+index 3ca9cfe..bfb51f6 100644
+--- a/tests/test_calibration_builder.py
++++ b/tests/test_calibration_builder.py
+@@ -115,7 +115,7 @@ def test_calibration_builder_import_error_is_actionable(monkeypatch):
+     import sys
+
+     monkeypatch.setitem(sys.modules, "audiosig", None)
+-    with pytest.raises(OptionalDependencyError, match=r"soprosynth\[audio\]"):
++    with pytest.raises(OptionalDependencyError, match=r"declared AudioSig dependency"):
+         measure_audio_files(["not-read-without-audiosig.wav"])
+
+
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index f44cd3a..d11adb9 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -16,6 +16,8 @@ def test_info_reports_contract_and_runtime_identity_without_model(monkeypatch, c
+     assert payload["version"] == __version__
+     assert payload["api"]["version"] == 1
+     assert payload["api"]["supports_request_measurement"] is True
++    assert payload["api"]["supports_sopro_output_policy"] is True
++    assert payload["api"]["caller_owns_text_boundaries"] is False
+     assert payload["api"]["supports_streaming"] is False
+     assert payload["runtime"] == identity
+
+@@ -43,7 +45,8 @@ def test_speak_routes_canonical_runtime_options_and_voice_level(monkeypatch, cap
+     class FakeResult:
+         def __init__(self):
+             self.metadata = {
+-                "voice_level_application": {"mode": "calibrated", "source": "override"}
++                "voice_level_application": {"mode": "calibrated", "source": "override"},
++                "sopro_output": {"mode": "raw", "gain_db": None},
+             }
+
+         def save_wav(self, path):
+@@ -78,6 +81,8 @@ def test_speak_routes_canonical_runtime_options_and_voice_level(monkeypatch, cap
+                 "hello.wav",
+                 "--language",
+                 "de",
++                "--output-mode",
++                "raw",
+                 "--top-k",
+                 "8",
+                 "--max-seconds",
+@@ -103,12 +108,14 @@ def test_speak_routes_canonical_runtime_options_and_voice_level(monkeypatch, cap
+     assert synthesis["language"] == "de"
+     assert synthesis["config"].top_k == 8
+     assert synthesis["config"].max_seconds == pytest.approx(4.5)
++    assert synthesis["output"].mode == "raw"
+     assert synthesis["voice_level"].mode == "calibrated"
+     assert synthesis["voice_level"].gain_db == pytest.approx(2.0)
+     assert calls["saved"] == "hello.wav"
+     output = capsys.readouterr().out
+     assert "hello.wav" in output
+     assert '"source": "override"' in output
++    assert '"sopro_output"' in output and '"mode": "raw"' in output
+
+
+ def test_cli_has_no_backend_switch_and_uses_cpu_profile_defaults(capsys):
+@@ -117,11 +124,14 @@ def test_cli_has_no_backend_switch_and_uses_cpu_profile_defaults(capsys):
+     assert args.model == "sopro:v2-turbo"
+     assert args.profile == "wasm-uint8"
+     assert args.provider == "cpu"
++    assert args.output_mode == "native"
+
+     with pytest.raises(SystemExit) as error:
+         cli.main(["speak", "--help"])
+     assert error.value.code == 0
+-    assert "--backend" not in capsys.readouterr().out
++    help_output = capsys.readouterr().out
++    assert "--backend" not in help_output
++    assert "--output-mode" in help_output
+
+
+ def test_gain_override_requires_calibrated_mode(monkeypatch):
+diff --git a/tests/test_onnx.py b/tests/test_onnx.py
+index a47d2a4..1c2d08a 100644
+--- a/tests/test_onnx.py
++++ b/tests/test_onnx.py
+@@ -15,7 +15,8 @@ from soprosynth import (
+     SynthesisRequest,
+     UnsupportedBundleError,
+ )
+-from soprosynth._onnxvoice import normalize_ref
++from soprosynth._onnxvoice import OnnxVoiceBackend, normalize_ref
++from soprosynth.config import SoproOutputConfig
+
+
+ class FakeEngine:
+@@ -30,17 +31,21 @@ class FakeEngine:
+         )
+         self.infer_args: tuple[tuple[int, ...], dict[str, Any]] | None = None
+         self.closed = False
++        self.reference_level = -21.25
++        self.infer_metadata = {}
+
+     def prepare_voice(self, waveform, sample_rate):
+         assert sample_rate == 24000
+-        return {"reference_samples": len(waveform)}
++        return {"reference_samples": len(waveform), "level_db": self.reference_level}
+
+     def prepare_text(self, text, language=None):
+         return SimpleNamespace(token_ids=(11, 12), language=language)
+
+     def infer(self, token_ids, **kwargs):
+         self.infer_args = (tuple(token_ids), kwargs)
+-        return SimpleNamespace(audio=np.array([0.1, -0.1], dtype=np.float32))
++        return SimpleNamespace(
++            audio=np.array([0.1, -0.1], dtype=np.float32), metadata=self.infer_metadata
++        )
+
+     def diagnostics(self):
+         session = SimpleNamespace(
+@@ -99,11 +104,16 @@ def test_managed_runtime_uses_onnxvoice_and_public_api(monkeypatch):
+     assert manager.open_args[1]["provider_options"]["CPUExecutionProvider"]
+
+     voice = runtime.prepare_voice((np.array([0.1, -0.1], dtype=np.float32), 24000))
+-    result = runtime.synthesize(SynthesisRequest("req-1", "Hello", language="en"), voice=voice)
++    assert voice.metadata["reference_level_db"] == -21.25
++    result = runtime.synthesize(
++        SynthesisRequest("req-1", "Hello", language="en"),
++        voice=voice,
++        output=SoproOutputConfig(mode="raw"),
++    )
+     assert result.audio.tolist() == pytest.approx([0.1, -0.1])
+     assert engine.infer_args is not None
+     assert engine.infer_args[0] == (11, 12)
+-    assert engine.infer_args[1]["voice_state"] == {"reference_samples": 2}
++    assert engine.infer_args[1]["voice_state"] == {"reference_samples": 2, "level_db": -21.25}
+     assert engine.infer_args[1]["language"] == "en"
+     measured = runtime.measure_request(
+         SynthesisRequest("measure", "Hello", language="en"), maximum=2
+@@ -114,6 +124,74 @@ def test_managed_runtime_uses_onnxvoice_and_public_api(monkeypatch):
+     assert engine.closed
+
+
++def test_sopro_segment_adapter_forwards_prompt_and_reads_semantic_metadata():
++    engine = FakeEngine()
++    engine.infer_metadata = {
++        "generated_semantic_tokens": (2, 3, 4),
++        "prompt_token_limit": 2,
++    }
++    backend = OnnxVoiceBackend(engine, profile="wasm-uint8", requested_providers="cpu")
++
++    result = backend.synthesize_segment(
++        "Hello",
++        ref={"voice": 1},
++        lang="en",
++        prompt_tokens=(8, 9),
++    )
++
++    assert result.semantic_tokens == (2, 3, 4)
++    assert result.prompt_token_limit == 2
++    assert result.audio.tolist() == pytest.approx([0.1, -0.1])
++    assert engine.infer_args is not None
++    assert engine.infer_args[1]["prompt_tokens"] == (8, 9)
++
++
++def test_sopro_segment_adapter_reports_legacy_prompt_override_failure():
++    class LegacyEngine(FakeEngine):
++        def infer(self, token_ids, **kwargs):
++            if "prompt_tokens" in kwargs:
++                raise TypeError("unexpected prompt_tokens")
++            return super().infer(token_ids, **kwargs)
++
++    backend = OnnxVoiceBackend(LegacyEngine(), profile="wasm-uint8", requested_providers="cpu")
++    with pytest.raises(RuntimeCapabilityError, match="upgrade ONNXVoice"):
++        backend.synthesize_segment("Second", ref={"voice": 1}, prompt_tokens=(8, 9))
++
++
++@pytest.mark.parametrize(
++    ("level", "expected"),
++    [
++        (-21.5, -21.5),
++        (np.float32(-18.25), -18.25),
++        (float("nan"), None),
++        (float("inf"), None),
++        (float("-inf"), None),
++        (True, None),
++        ("not-a-level", None),
++        ([1.0], None),
++        (None, None),
++    ],
++)
++def test_reference_level_extraction_only_accepts_finite_scalars(level, expected):
++    backend = OnnxVoiceBackend(FakeEngine(), profile="wasm-uint8", requested_providers="cpu")
++    assert backend.reference_level_db({"level_db": level}) == expected
++    assert backend.reference_level_db(SimpleNamespace(level_db=level)) == expected
++
++
++@pytest.mark.parametrize("level", [float("nan"), float("inf"), True, "bad", [1.0], None])
++def test_prepared_voice_excludes_invalid_reference_level_metadata(level):
++    engine = FakeEngine()
++    engine.reference_level = level
++    backend = OnnxVoiceBackend(engine, profile="wasm-uint8", requested_providers="cpu")
++    runtime = SoproRuntime(backend)
++
++    voice = runtime.prepare_voice((np.array([0.1, -0.1], dtype=np.float32), 24000))
++
++    assert "reference_level_db" not in voice.metadata
++    assert all(type(value) is int for value in voice.metadata.values())
++    runtime.close()
++
++
+ def test_onnxvoice_capability_errors_are_mapped(monkeypatch):
+     import soprosynth._onnxvoice as boundary
+
+diff --git a/tests/test_postprocess.py b/tests/test_postprocess.py
+new file mode 100644
+index 0000000..15c8013
+--- /dev/null
++++ b/tests/test_postprocess.py
+@@ -0,0 +1,93 @@
++from __future__ import annotations
++
++import numpy as np
++import pytest
++
++from soprosynth import SoproOutputConfig
++from soprosynth.errors import InvalidGenerationConfigError, RuntimeCapabilityError
++from soprosynth.postprocess import condition_sopro_output, split_text
++
++
++def test_split_text_matches_upstream_sentence_clause_and_word_packing():
++    assert split_text("First one. Second two. Third.", 12) == (
++        "First one.",
++        "Second two.",
++        "Third.",
++    )
++    assert split_text("one, two, three, four", 9) == ("one, two,", "three,", "four")
++    assert split_text("  First.\n  Second. ", 50) == ("First. Second.",)
++    assert split_text("one two extraordinarilylongword", 5)[-1] == "extraordinarilylongword"
++
++
++def test_output_config_defaults_native_and_rejects_unknown_modes():
++    assert SoproOutputConfig().mode == "native"
++    assert SoproOutputConfig(mode="raw").mode == "raw"
++    with pytest.raises(InvalidGenerationConfigError, match="native.*raw"):
++        SoproOutputConfig(mode="unsupported")  # type: ignore[arg-type]
++
++
++def test_raw_output_is_unchanged_and_does_not_require_reference_level():
++    parts = (
++        np.array([0.25, -0.5], dtype=np.float32),
++        np.array([0.75], dtype=np.float32),
++    )
++    audio, metadata = condition_sopro_output(
++        parts,
++        sample_rate=24_000,
++        mode="raw",
++        reference_level_db=None,
++    )
++    np.testing.assert_array_equal(audio, [0.25, -0.5, 0.75])
++    assert metadata["gain_db"] is None
++    assert metadata["trimmed_lead_samples"] == metadata["trimmed_trail_samples"] == 0
++    assert metadata["limiter_applied"] is False
++
++
++def test_native_gain_trim_and_final_fade_match_sopro_constants():
++    source = np.zeros(1_200, dtype=np.float32)
++    source[300:700] = 0.2
++    audio, metadata = condition_sopro_output(
++        [source],
++        sample_rate=1_000,
++        mode="native",
++        reference_level_db=-19.8,
++    )
++    assert audio.shape == (790,)
++    assert metadata["gain_db"] == pytest.approx(-3.2)
++    assert metadata["trimmed_lead_samples"] == 210
++    assert metadata["trimmed_trail_samples"] == 200
++    assert metadata["limited"] is False
++    assert audio[100] == pytest.approx(0.2 * 10 ** (-3.2 / 20), abs=1e-7)
++    assert audio[-1] == 0.0
++
++
++def test_native_segments_get_join_fades_then_soft_limit_and_final_fade():
++    first = np.full(100, 0.5, dtype=np.float32)
++    second = np.full(100, 1.2, dtype=np.float32)
++    audio, metadata = condition_sopro_output(
++        [first, second],
++        sample_rate=1_000,
++        mode="native",
++        reference_level_db=-23.0,
++    )
++    assert audio.shape == (200,)
++    assert metadata["segment_count"] == 2
++    assert metadata["limiter_applied"] is True
++    assert metadata["limited"] is True
++    assert audio[99] == 0.0 and audio[100] == 0.0
++    assert float(np.max(np.abs(audio))) < 1.0
++    assert audio[-1] == 0.0
++
++
++def test_native_mode_requires_prepared_reference_level_and_handles_no_audio():
++    with pytest.raises(RuntimeCapabilityError, match="reference_level_db"):
++        condition_sopro_output([], sample_rate=24_000, mode="native", reference_level_db=None)
++    audio, metadata = condition_sopro_output(
++        [],
++        sample_rate=24_000,
++        mode="native",
++        reference_level_db=-23.0,
++        empty_audio_samples=1_024,
++    )
++    assert audio.shape == (1_024,) and not np.any(audio)
++    assert metadata["limiter_applied"] is False
+diff --git a/tests/test_sopro_orchestration.py b/tests/test_sopro_orchestration.py
+new file mode 100644
+index 0000000..bd2bbac
+--- /dev/null
++++ b/tests/test_sopro_orchestration.py
+@@ -0,0 +1,166 @@
++from __future__ import annotations
++
++from types import SimpleNamespace
++
++import numpy as np
++import pytest
++
++from soprosynth import RuntimeCapabilityError, SoproRuntime, SynthesisRequest, VoiceLevelConfig
++from soprosynth.config import SoproOutputConfig
++
++
++class SegmentEngine:
++    sample_rate = 1_000
++    profile = "wasm-uint8"
++    model_id = "sopro:v2-turbo"
++    source_revision = "fixture-revision"
++    max_segment_chars = 6
++    token_samples = 32
++
++    def __init__(self, outputs, *, reference_level=-23.0):
++        self.outputs = list(outputs)
++        self.reference_level = reference_level
++        self.calls = []
++
++    def prepare_reference(self, reference):
++        return {"level_db": self.reference_level}
++
++    def reference_level_db(self, state):
++        return state.get("level_db")
++
++    def synthesize_segment(self, text, **kwargs):
++        self.calls.append((text, kwargs.get("prompt_tokens")))
++        output = self.outputs.pop(0)
++        return SimpleNamespace(
++            audio=output["audio"],
++            semantic_tokens=output.get("tokens"),
++            prompt_token_limit=output.get("limit"),
++        )
++
++    def close(self):
++        pass
++
++
++def _voice(runtime):
++    return runtime.prepare_voice((np.array([0.1, -0.1], dtype=np.float32), 1_000))
++
++
++def test_long_text_splits_normalizes_and_carries_last_prompt_window():
++    engine = SegmentEngine(
++        [
++            {"audio": np.array([0.1, 0.1], dtype=np.float32), "tokens": (10, 11, 12), "limit": 2},
++            {"audio": np.array([0.2, 0.2], dtype=np.float32), "tokens": (), "limit": 2},
++            {"audio": np.array([0.3, 0.3], dtype=np.float32), "tokens": (20, 21), "limit": 2},
++        ]
++    )
++    runtime = SoproRuntime(engine)
++    result = runtime.synthesize_text(
++        "One.\nTwo.  Three.",
++        voice=_voice(runtime),
++        output=SoproOutputConfig(mode="raw"),
++    )
++    assert [text for text, _ in engine.calls] == ["One.", "Two.", "Three."]
++    assert [prompt for _, prompt in engine.calls] == [None, (11, 12), (11, 12)]
++    np.testing.assert_allclose(result.audio, [0.1, 0.1, 0.2, 0.2, 0.3, 0.3])
++    assert result.metadata["sopro_output"]["mode"] == "raw"
++    assert result.metadata["sopro_output"]["text_segment_count"] == 3
++    runtime.close()
++
++
++def test_long_text_without_semantic_carry_contract_fails_before_inference():
++    class LegacyEngine:
++        sample_rate = 1_000
++        profile = "wasm-uint8"
++        max_segment_chars = 6
++
++        def __init__(self):
++            self.calls = 0
++
++        def prepare_reference(self, reference):
++            return object()
++
++        def synthesize(self, text, **kwargs):
++            self.calls += 1
++            return np.array([0.25], dtype=np.float32)
++
++        def close(self):
++            pass
++
++    engine = LegacyEngine()
++    runtime = SoproRuntime(engine)
++    with pytest.raises(RuntimeCapabilityError, match="semantic prompt carry"):
++        runtime.synthesize_text(
++            "One. Two. Three.",
++            voice=_voice(runtime),
++            output=SoproOutputConfig(mode="raw"),
++        )
++    assert engine.calls == 0
++    runtime.close()
++
++
++def test_missing_semantic_metadata_fails_before_the_next_segment():
++    engine = SegmentEngine([{"audio": np.array([0.1], dtype=np.float32)}])
++    runtime = SoproRuntime(engine)
++    with pytest.raises(RuntimeCapabilityError, match="generated semantic tokens"):
++        runtime.synthesize_text(
++            "One. Two.",
++            voice=_voice(runtime),
++            output=SoproOutputConfig(mode="raw"),
++        )
++    assert engine.calls == [("One.", None)]
++    runtime.close()
++
++
++def test_native_conditioning_precedes_separate_voice_calibration():
++    engine = SegmentEngine(
++        [{"audio": np.full(200, 1.2, dtype=np.float32), "tokens": (), "limit": 2}],
++        reference_level=-23.0,
++    )
++    runtime = SoproRuntime(engine)
++    result = runtime.synthesize_text(
++        "Hello.",
++        voice=_voice(runtime),
++        voice_level=VoiceLevelConfig(mode="calibrated", gain_db=6.0),
++    )
++    output = result.metadata["sopro_output"]
++    assert output["mode"] == "native"
++    assert output["target_level_db"] == -23.0
++    assert output["gain_db"] == 0.0
++    assert output["limited"] is True
++    assert result.metadata["voice_level_application"]["source"] == "override"
++    assert result.audio[0] > 1.9
++    runtime.close()
++
++
++def test_raw_mode_keeps_waveform_and_applies_calibration_as_a_distinct_layer():
++    source = np.array([0.75, -0.75], dtype=np.float32)
++    engine = SegmentEngine([{"audio": source, "tokens": (), "limit": 2}])
++    runtime = SoproRuntime(engine)
++    result = runtime.synthesize_text(
++        "Hello.",
++        voice=_voice(runtime),
++        output=SoproOutputConfig(mode="raw"),
++        voice_level=VoiceLevelConfig(mode="calibrated", gain_db=6.0),
++    )
++    np.testing.assert_allclose(result.audio, source * 10 ** (6.0 / 20.0), rtol=1e-6)
++    assert result.metadata["sopro_output"]["mode"] == "raw"
++    assert result.metadata["sopro_output"]["gain_db"] is None
++    assert result.metadata["voice_level_application"]["source"] == "override"
++    runtime.close()
++
++
++def test_native_mode_requires_reference_level_before_inference():
++    engine = SegmentEngine([{"audio": np.array([0.1], dtype=np.float32)}], reference_level=None)
++    runtime = SoproRuntime(engine)
++    voice = _voice(runtime)
++    assert "reference_level_db" not in voice.metadata
++    with pytest.raises(RuntimeCapabilityError, match="reference_level_db"):
++        runtime.synthesize(SynthesisRequest("native", "Hello."), voice=voice)
++    assert engine.calls == []
++    raw_result = runtime.synthesize(
++        SynthesisRequest("raw", "Hello."),
++        voice=voice,
++        output=SoproOutputConfig(mode="raw"),
++    )
++    assert raw_result.audio.tolist() == pytest.approx([0.1])
++    runtime.close()
+diff --git a/tests/test_voice.py b/tests/test_voice.py
+index 4043b3c..0681023 100644
+--- a/tests/test_voice.py
++++ b/tests/test_voice.py
+@@ -25,6 +25,8 @@ def test_load_path_tuple_resampling_and_audio_identity(tmp_path):
+     loaded = load_reference_audio(path, expected_sample_rate=24000)
+     assert loaded.source == str(path.resolve())
+     assert loaded.sample_rate == 24000
++    assert loaded.source_sample_rate == 24000
++    assert loaded.source_fingerprint == fingerprint_audio(loaded.audio, 24000)
+     assert loaded.audio.dtype == np.float32
+     assert fingerprint_audio(loaded.audio, loaded.sample_rate) == fingerprint_audio(
+         loaded.audio.copy(), loaded.sample_rate
+@@ -32,11 +34,15 @@ def test_load_path_tuple_resampling_and_audio_identity(tmp_path):
+
+     resampled = load_reference_audio(path, expected_sample_rate=48000)
+     assert resampled.sample_rate == 48000
++    assert resampled.source_sample_rate == 24000
++    assert resampled.source_fingerprint == loaded.source_fingerprint
+     assert resampled.audio.size == 6
+
+     tuple_audio = load_reference_audio((np.array([[0.0, 1.0], [1.0, 1.0]]), 24000))
+     assert tuple_audio.source is None
+     assert tuple_audio.audio.tolist() == pytest.approx([0.5, 1.0])
++    assert tuple_audio.source_sample_rate == 24000
++    assert tuple_audio.source_fingerprint == fingerprint_audio(tuple_audio.audio, 24000)
+
+
+ def test_prepared_voice_is_returned_for_runtime_compatibility_check():
+@@ -89,9 +95,9 @@ def test_audiosig_resampling_is_opt_in_anti_aliased_and_rate_correct():
+     assert np.sqrt(np.mean(loaded.audio[256:-256] ** 2)) < 0.01
+
+
+-def test_audiosig_resampling_missing_extra_has_actionable_error(monkeypatch):
++def test_audiosig_resampling_missing_dependency_has_actionable_error(monkeypatch):
+     monkeypatch.setitem(sys.modules, "audiosig", None)
+-    with pytest.raises(OptionalDependencyError, match=r"soprosynth\[audio\]"):
++    with pytest.raises(OptionalDependencyError, match=r"declared AudioSig dependency"):
+         load_reference_audio(
+             (np.ones(8, dtype=np.float32), 48000),
+             expected_sample_rate=24000,
+diff --git a/tests/test_wheel_metadata.py b/tests/test_wheel_metadata.py
+index 1647b16..a54ec5b 100644
+--- a/tests/test_wheel_metadata.py
++++ b/tests/test_wheel_metadata.py
+@@ -37,7 +37,7 @@ def built_wheel(tmp_path_factory):
+     return wheels[0]
+
+
+-def test_wheel_has_no_upstream_sopro_requirement(built_wheel):
++def test_wheel_has_core_audiosig_and_no_upstream_sopro_requirement(built_wheel):
+     with zipfile.ZipFile(built_wheel) as archive:
+         metadata_paths = [
+             name for name in archive.namelist() if name.endswith(".dist-info/METADATA")
+@@ -48,6 +48,14 @@ def test_wheel_has_no_upstream_sopro_requirement(built_wheel):
+     requirements = [Requirement(value) for value in metadata.get_all("Requires-Dist", [])]
+     assert all(requirement.name.lower() != "sopro" for requirement in requirements)
+
++    audiosig = [
++        requirement for requirement in requirements if requirement.name.lower() == "audiosig"
++    ]
++    assert len(audiosig) == 1
++    assert audiosig[0].marker is None
++    assert audiosig[0].specifier.contains("0.1.8")
++    assert not audiosig[0].specifier.contains("0.2")
++
+
+ def test_wheel_imports_without_upstream_sopro_or_inference_modules(built_wheel, tmp_path):
+     environment = tmp_path / "venv"
+diff --git a/tests/wheel_api_smoke.py b/tests/wheel_api_smoke.py
+index 2fa32fb..722f5d0 100644
+--- a/tests/wheel_api_smoke.py
++++ b/tests/wheel_api_smoke.py
+@@ -10,6 +10,8 @@ import soprosynth
+ required = (
+     "REQUEST_API_VERSION",
+     "RequestApiContract",
++    "SoproOutputConfig",
++    "SoproOutputMode",
+     "RuntimeCapabilities",
+     "request_api_contract",
+     "SynthesisRequest",
+@@ -27,6 +29,8 @@ assert soprosynth.REQUEST_API_VERSION == 1
+ contract = soprosynth.request_api_contract()
+ assert contract.version == 1
+ assert contract.supports_streaming is False
++assert contract.supports_sopro_output_policy is True
++assert contract.caller_owns_text_boundaries is False
+ capabilities = soprosynth.SoproRuntime(object()).capabilities
+ assert capabilities.backend == "onnx"
+ assert capabilities.supports_streaming is False

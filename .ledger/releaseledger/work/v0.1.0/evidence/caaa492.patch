@@ -1,0 +1,612 @@
+ .github/workflows/codecov.yml                      | 26 ++++++
+ .github/workflows/pre-commit.yml                   | 24 ++++++
+ .../workflows/{publish.yml => python-publish.yml}  |  2 +
+ .github/workflows/tests.yml                        | 95 ++++++++++++----------
+ README.md                                          |  1 -
+ scripts/check_release_artifacts.py                 |  4 +-
+ soprosynth/api_contract.py                         |  1 +
+ soprosynth/calibration.py                          | 48 ++++++++---
+ soprosynth/calibration_builder.py                  | 16 +++-
+ soprosynth/config.py                               |  5 +-
+ soprosynth/types.py                                |  2 +-
+ soprosynth/voice.py                                |  6 +-
+ tests/integration/test_real_native_sopro.py        |  4 +-
+ tests/test_calibration.py                          |  4 +-
+ tests/test_calibration_builder.py                  | 54 ++++++------
+ tests/test_release_checks.py                       | 10 +--
+ tests/test_voice.py                                |  1 -
+ 17 files changed, 196 insertions(+), 107 deletions(-)
+
+diff --git a/.github/workflows/codecov.yml b/.github/workflows/codecov.yml
+new file mode 100644
+index 0000000..6f191c3
+--- /dev/null
++++ b/.github/workflows/codecov.yml
+@@ -0,0 +1,26 @@
++name: CodeCov
++on: push
++jobs:
++  run:
++    runs-on: ubuntu-latest
++    env:
++      OS: ubuntu-latest
++    steps:
++    - uses: actions/checkout@v4
++    - name: Setup Python
++      uses: actions/setup-python@v5
++      with:
++        python-version: "3.13"
++    - name: 'generate report'
++      run: |
++        python -m pip install -e ".[dev]" pytest-cov
++        python -m pytest --cov=soprosynth --junitxml=junit.xml
++    - name: Upload coverage to Codecov
++      uses: codecov/codecov-action@v5
++      with:
++        token: ${{ secrets.CODECOV_TOKEN }} # required
++    - name: Upload test results to Codecov
++      if: ${{ !cancelled() }}
++      uses: codecov/test-results-action@v1
++      with:
++        token: ${{ secrets.CODECOV_TOKEN }}
+diff --git a/.github/workflows/pre-commit.yml b/.github/workflows/pre-commit.yml
+new file mode 100644
+index 0000000..44ddb6a
+--- /dev/null
++++ b/.github/workflows/pre-commit.yml
+@@ -0,0 +1,24 @@
++name: pre-commit
++
++on:
++  pull_request:
++  push:
++
++jobs:
++  pre-commit:
++    runs-on: ubuntu-latest
++
++    steps:
++      - uses: actions/checkout@v4
++
++      - uses: actions/setup-python@v5
++        with:
++          python-version: "3.13"
++
++
++      - name: Install project and Python tools
++        run: |
++          python -m pip install -e ".[dev]"
++
++
++      - uses: pre-commit/action@v3.0.1
+diff --git a/.github/workflows/publish.yml b/.github/workflows/python-publish.yml
+similarity index 97%
+rename from .github/workflows/publish.yml
+rename to .github/workflows/python-publish.yml
+index fbcab0f..de2a1a6 100644
+--- a/.github/workflows/publish.yml
++++ b/.github/workflows/python-publish.yml
+@@ -77,3 +77,5 @@ jobs:
+         uses: pypa/gh-action-pypi-publish@release/v1
+         with:
+           packages-dir: dist/
++          password: ${{ secrets.PYPI_API_TOKEN }}
++          attestations: false
+diff --git a/.github/workflows/tests.yml b/.github/workflows/tests.yml
+index b3e4918..ed55703 100644
+--- a/.github/workflows/tests.yml
++++ b/.github/workflows/tests.yml
+@@ -1,51 +1,62 @@
+-name: tests
+-
++name: Run tests
+ on:
+   push:
++  workflow_call:
+   pull_request:
+-
+-permissions:
+-  contents: read
+-
+ jobs:
+-  test:
+-    runs-on: ubuntu-latest
++  run:
++    runs-on: ${{ matrix.os }}
+     strategy:
+-      fail-fast: false
+       matrix:
+-        python-version: ["3.10", "3.12", "3.13"]
++        os: [ubuntu-latest, windows-latest, macos-latest]
++        python-version: ["3.10", "3.11", "3.12", "3.13"]
++    steps:
++    - uses: actions/checkout@v4
++    - name: Setup Python
++      uses: actions/setup-python@v5
++      with:
++        python-version: ${{ matrix.python-version }}
++    - name: Install packages
++      run: |
++        python -m pip install -e ".[dev]"
++        python -m compileall -q soprosynth tests
++    - name: Tests
++      run: pytest
++  python314-public-api:
++    runs-on: ubuntu-latest
+     steps:
+-      - uses: actions/checkout@v4
+-        with:
+-          fetch-depth: 0
+-      - uses: actions/setup-python@v5
+-        with:
+-          python-version: ${{ matrix.python-version }}
+-      - name: Install project and development dependencies
+-        run: python -m pip install -e ".[dev]"
+-      - name: Lint
+-        run: python -m ruff check .
+-      - name: Unit and offline boundary tests
+-        run: python -m pytest -q
+-
+-  wheel-smoke:
++    - uses: actions/checkout@v4
++    - name: Setup Python 3.14
++      uses: actions/setup-python@v5
++      with:
++        python-version: "3.14"
++    - name: Install package and test dependencies
++      run: |
++        python -m pip install pytest
++        python -m pip install -e .
++    - name: Test no-model public API on Python 3.14
++      run: >-
++        python -m pytest -q
++        tests/test_api_contract.py
++        tests/test_package_boundary.py
++        tests/test_discovery.py
++  installed-wheel-smoke:
+     runs-on: ubuntu-latest
+     steps:
+-      - uses: actions/checkout@v4
+-        with:
+-          fetch-depth: 0
+-      - uses: actions/setup-python@v5
+-        with:
+-          python-version: "3.12"
+-      - name: Install build tools
+-        run: python -m pip install build twine
+-      - name: Build wheel and source distribution
+-        run: python -m build
+-      - name: Validate distribution metadata
+-        run: python -m twine check dist/*
+-      - name: Install wheel into a clean environment
+-        run: |
+-          python -m venv "$RUNNER_TEMP/soprosynth-wheel-venv"
+-          "$RUNNER_TEMP/soprosynth-wheel-venv/bin/python" -m pip install dist/*.whl
+-      - name: Smoke-test installed wheel outside the checkout
+-        run: "$RUNNER_TEMP/soprosynth-wheel-venv/bin/python" -I tests/wheel_api_smoke.py
++    - uses: actions/checkout@v4
++    - name: Setup Python
++      uses: actions/setup-python@v5
++      with:
++        python-version: "3.13"
++    - name: Install build tooling
++      run: python -m pip install build
++    - name: Build wheel
++      run: python -m build --wheel
++    - name: Install wheel into a clean virtual environment
++      run: |
++        python -m venv /tmp/soprosynth-wheel
++        /tmp/soprosynth-wheel/bin/python -m pip install dist/*.whl
++    - name: Smoke-test installed public API without model assets
++      run: |
++        cd /tmp
++        /tmp/soprosynth-wheel/bin/python -I "$GITHUB_WORKSPACE/tests/wheel_api_smoke.py"
+diff --git a/README.md b/README.md
+index 10132dd..47548d7 100644
+--- a/README.md
++++ b/README.md
+@@ -98,7 +98,6 @@ Voice-level processing is opt-in through `VoiceLevelConfig`. The packaged schema
+
+ A caller may provide an explicit static `gain_db` override. This applies linear gain without measuring loudness or clipping the in-memory result; PCM WAV conversion may clip. Example: [`examples/calibrated_voice_level.py`](examples/calibrated_voice_level.py).
+
+-
+ For an offline measured catalog, install `soprosynth[audio]` and run `soprosynth-build-calibration` on licensed PCM WAV outputs. The command requires corpus/license/provenance metadata, an exact model revision, explicit target LUFS and true-peak ceiling, and `--i-have-rights`; it records the `audiosig` version, per-sample rates/durations/loudness/sample/true peaks, and source-file SHA-256 values. It targets the median per-file integrated LUFS while limiting the worst 4x true peak, and rejects gains outside ±24 dB by default. The command writes a reviewable external catalog and refuses to write into the packaged catalog. Keep that production catalog empty until real licensed measurements have been reviewed; never commit reference audio or generated speech.
+
+ Reference-rate conversion remains dependency-free linear interpolation by default. To opt into anti-aliased resampling, install `soprosynth[audio]` and call `runtime.prepare_voice(reference, resampler="audiosig")`; ONNX Runtime and audiosig remain optional.
+diff --git a/scripts/check_release_artifacts.py b/scripts/check_release_artifacts.py
+index 8818237..9022052 100644
+--- a/scripts/check_release_artifacts.py
++++ b/scripts/check_release_artifacts.py
+@@ -27,7 +27,9 @@ def _wheel_version(path: Path, *, expected: str | None = None) -> str:
+             raise SystemExit(f"expected one wheel METADATA file in {path.name}")
+         dist_info = PurePosixPath(metadata[0]).parts[0]
+         if expected is not None and dist_info != f"soprosynth-{expected}.dist-info":
+-            raise SystemExit(f"wheel dist-info filename does not match release version: {dist_info}")
++            raise SystemExit(
++                f"wheel dist-info filename does not match release version: {dist_info}"
++            )
+         return _metadata_version(archive.read(metadata[0]).decode("utf-8"))
+
+
+diff --git a/soprosynth/api_contract.py b/soprosynth/api_contract.py
+index b0e1d29..b05fbc2 100644
+--- a/soprosynth/api_contract.py
++++ b/soprosynth/api_contract.py
+@@ -11,6 +11,7 @@ REQUEST_API_VERSION = 1
+ @dataclass(frozen=True, slots=True)
+ class RequestApiContract:
+     """Stable producer-level union; not a promise for every selected backend."""
++
+     version: int
+     request_type: type[Any]
+     result_type: type[Any]
+diff --git a/soprosynth/calibration.py b/soprosynth/calibration.py
+index fb099bb..77d13f2 100644
+--- a/soprosynth/calibration.py
++++ b/soprosynth/calibration.py
+@@ -21,7 +21,11 @@ _CALIBRATION_RESOURCE = "data/voice_level_calibration.json"
+
+
+ def _validate_catalog(raw: Any) -> Mapping[str, Mapping[str, Any]]:
+-    if not isinstance(raw, Mapping) or type(raw.get("schema")) is not int or raw.get("schema") not in (1, 2):
++    if (
++        not isinstance(raw, Mapping)
++        or type(raw.get("schema")) is not int
++        or raw.get("schema") not in (1, 2)
++    ):
+         raise UnsupportedBundleError("Voice-level calibration catalog must use schema 1 or 2")
+     schema = raw["schema"]
+     records = raw.get("records")
+@@ -134,11 +138,17 @@ def _validate_catalog(raw: Any) -> Mapping[str, Mapping[str, Any]]:
+                 )
+             converted: list[float] = []
+             for value in values:
+-                if isinstance(value, bool) or not isinstance(value, Real) or not math.isfinite(float(value)):
++                if (
++                    isinstance(value, bool)
++                    or not isinstance(value, Real)
++                    or not math.isfinite(float(value))
++                ):
+                     raise UnsupportedBundleError(f"Calibration record {key!r} has invalid {field}")
+                 converted.append(float(value))
+             if field == "durations_seconds" and any(value <= 0 for value in converted):
+-                raise UnsupportedBundleError(f"Calibration record {key!r} has non-positive durations")
++                raise UnsupportedBundleError(
++                    f"Calibration record {key!r} has non-positive durations"
++                )
+             numeric_arrays[field] = tuple(converted)
+         numeric_fields = (
+             "target_lufs",
+@@ -154,7 +164,11 @@ def _validate_catalog(raw: Any) -> Mapping[str, Mapping[str, Any]]:
+         numeric: dict[str, float] = {}
+         for field in numeric_fields:
+             value = record.get(field)
+-            if isinstance(value, bool) or not isinstance(value, Real) or not math.isfinite(float(value)):
++            if (
++                isinstance(value, bool)
++                or not isinstance(value, Real)
++                or not math.isfinite(float(value))
++            ):
+                 raise UnsupportedBundleError(f"Calibration record {key!r} has invalid {field}")
+             numeric[field] = float(value)
+         if numeric["max_abs_gain_db"] <= 0 or abs(float(gain)) > numeric["max_abs_gain_db"] + 1e-9:
+@@ -167,14 +181,21 @@ def _validate_catalog(raw: Any) -> Mapping[str, Mapping[str, Any]]:
+             ("max_measured_sample_peak_dbfs", max_sample_peak),
+             ("max_measured_true_peak_dbtp", max_true_peak),
+         )
+-        if any(not math.isclose(numeric[field], value, rel_tol=0.0, abs_tol=1e-6) for field, value in summary):
+-            raise UnsupportedBundleError(f"Calibration record {key!r} has inconsistent measurement summaries")
++        if any(
++            not math.isclose(numeric[field], value, rel_tol=0.0, abs_tol=1e-6)
++            for field, value in summary
++        ):
++            raise UnsupportedBundleError(
++                f"Calibration record {key!r} has inconsistent measurement summaries"
++            )
+         policy_gain = min(
+             numeric["target_lufs"] - median_lufs,
+             numeric["max_true_peak_dbtp"] - max_true_peak,
+         )
+         if not math.isclose(float(gain), policy_gain, rel_tol=0.0, abs_tol=1e-6):
+-            raise UnsupportedBundleError(f"Calibration record {key!r} does not follow its target/peak policy")
++            raise UnsupportedBundleError(
++                f"Calibration record {key!r} does not follow its target/peak policy"
++            )
+         predictions = (
+             ("predicted_median_lufs", median_lufs + float(gain)),
+             ("predicted_max_sample_peak_dbfs", max_sample_peak + float(gain)),
+@@ -184,9 +205,13 @@ def _validate_catalog(raw: Any) -> Mapping[str, Mapping[str, Any]]:
+             not math.isclose(numeric[field], value, rel_tol=0.0, abs_tol=1e-6)
+             for field, value in predictions
+         ):
+-            raise UnsupportedBundleError(f"Calibration record {key!r} has inconsistent predicted measurements")
++            raise UnsupportedBundleError(
++                f"Calibration record {key!r} has inconsistent predicted measurements"
++            )
+         if numeric["predicted_max_true_peak_dbtp"] > numeric["max_true_peak_dbtp"] + 1e-6:
+-            raise UnsupportedBundleError(f"Calibration record {key!r} exceeds its true-peak ceiling")
++            raise UnsupportedBundleError(
++                f"Calibration record {key!r} exceeds its true-peak ceiling"
++            )
+         frozen = dict(record)
+         frozen.update(numeric)
+         frozen["gain_db"] = float(gain)
+@@ -196,6 +221,7 @@ def _validate_catalog(raw: Any) -> Mapping[str, Mapping[str, Any]]:
+         validated[key] = MappingProxyType(frozen)
+     return MappingProxyType(validated)
+
++
+ def load_calibration_catalog(
+     source: str | Path | Mapping[str, Any] | None = None,
+ ) -> Mapping[str, Mapping[str, Any]]:
+@@ -267,9 +293,7 @@ def apply_voice_level_calibration(
+     if not isinstance(config, VoiceLevelConfig):
+         raise InvalidGenerationConfigError("config must be a VoiceLevelConfig")
+     if config.mode == "off" and config.gain_db is not None:
+-        raise InvalidGenerationConfigError(
+-            "gain_db requires voice-level mode 'calibrated'"
+-        )
++        raise InvalidGenerationConfigError("gain_db requires voice-level mode 'calibrated'")
+     source = "off"
+     gain_db = 0.0
+     if config.gain_db is not None:
+diff --git a/soprosynth/calibration_builder.py b/soprosynth/calibration_builder.py
+index 31eca9e..09913c0 100644
+--- a/soprosynth/calibration_builder.py
++++ b/soprosynth/calibration_builder.py
+@@ -206,7 +206,9 @@ def measure_audio_files(
+             or analysis.true_peak_dbtp is None
+         ):
+             raise ValueError(f"audiosig returned incomplete measurements for {path}")
+-        loudnesses.append(_finite_number(analysis.integrated_lufs, f"integrated loudness for {path}"))
++        loudnesses.append(
++            _finite_number(analysis.integrated_lufs, f"integrated loudness for {path}")
++        )
+         sample_peaks.append(_finite_number(analysis.sample_peak_dbfs, f"sample peak for {path}"))
+         true_peaks.append(_finite_number(analysis.true_peak_dbtp, f"true peak for {path}"))
+         sample_rates.append(sample_rate)
+@@ -231,10 +233,14 @@ def _parser() -> argparse.ArgumentParser:
+     parser.add_argument("--model-id", required=True)
+     parser.add_argument("--revision", required=True, help="exact immutable model revision")
+     parser.add_argument("--profile", help="required for ONNX calibration identity")
+-    parser.add_argument("--audio", action="append", required=True, help="licensed output WAV; repeat per sample")
++    parser.add_argument(
++        "--audio", action="append", required=True, help="licensed output WAV; repeat per sample"
++    )
+     parser.add_argument("--corpus", required=True)
+     parser.add_argument("--license", dest="license_id", required=True)
+-    parser.add_argument("--provenance", required=True, help="corpus revision, source URL, or run record")
++    parser.add_argument(
++        "--provenance", required=True, help="corpus revision, source URL, or run record"
++    )
+     parser.add_argument("--target-lufs", type=float, required=True)
+     parser.add_argument("--max-true-peak-dbtp", type=float, required=True)
+     parser.add_argument("--max-abs-gain-db", type=float, default=24.0)
+@@ -265,7 +271,9 @@ def main(argv: Sequence[str] | None = None) -> int:
+
+     output = args.output.expanduser().resolve()
+     if output == _PRODUCTION_CATALOG.resolve():
+-        parser.error("write a reviewable calibration file; the packaged production catalog is not an output target")
++        parser.error(
++            "write a reviewable calibration file; the packaged production catalog is not an output target"
++        )
+     if output.exists() and not args.force:
+         parser.error(f"output already exists (pass --force to replace it): {output}")
+
+diff --git a/soprosynth/config.py b/soprosynth/config.py
+index adee995..18bb9e1 100644
+--- a/soprosynth/config.py
++++ b/soprosynth/config.py
+@@ -87,9 +87,8 @@ class VoiceLevelConfig:
+             _number("gain_db", self.gain_db)
+
+         if self.mode == "off" and self.gain_db is not None:
+-            raise InvalidGenerationConfigError(
+-                "gain_db requires voice-level mode 'calibrated'"
+-            )
++            raise InvalidGenerationConfigError("gain_db requires voice-level mode 'calibrated'")
++
+
+ @dataclass(frozen=True, slots=True)
+ class VoiceLevelApplication:
+diff --git a/soprosynth/types.py b/soprosynth/types.py
+index 44bf88e..b632662 100644
+--- a/soprosynth/types.py
++++ b/soprosynth/types.py
+@@ -279,6 +279,7 @@ class RuntimeDiagnostics:
+                 raise InvalidRequestError("session diagnostics must not expose backend objects")
+         object.__setattr__(self, "sessions", tuple(normalized_sessions))
+
++
+ @dataclass(frozen=True, slots=True)
+ class RuntimeCapabilities:
+     """Capabilities of one selected runtime, not the producer-level union."""
+@@ -316,7 +317,6 @@ class RuntimeCapabilities:
+                 raise InvalidRequestError(f"{name} must be a boolean")
+
+
+-
+ @dataclass(frozen=True, slots=True)
+ class DiscoveredBundle:
+     id: str
+diff --git a/soprosynth/voice.py b/soprosynth/voice.py
+index ae42e45..c37e8ec 100644
+--- a/soprosynth/voice.py
++++ b/soprosynth/voice.py
+@@ -22,7 +22,6 @@ class ReferenceAudio:
+     native_source: str | None = None
+
+
+-
+ def _resample_audio(
+     audio: np.ndarray,
+     source_rate: int,
+@@ -41,6 +40,7 @@ def _resample_audio(
+     result = resample(audio, source_rate=source_rate, target_rate=target_rate)
+     return np.ascontiguousarray(result, dtype=np.float32)
+
++
+ def fingerprint_audio(audio: np.ndarray, sample_rate: int) -> str:
+     digest = hashlib.sha256()
+     digest.update(sample_rate.to_bytes(8, "little", signed=False))
+@@ -118,9 +118,7 @@ def load_reference_audio(
+     if type(sample_rate) is not int or sample_rate <= 0:
+         raise InvalidVoiceError("reference sample rate must be a positive integer")
+     if expected_sample_rate is not None and sample_rate != expected_sample_rate:
+-        audio = _resample_audio(
+-            audio, sample_rate, expected_sample_rate, method=resampler
+-        )
++        audio = _resample_audio(audio, sample_rate, expected_sample_rate, method=resampler)
+         sample_rate = expected_sample_rate
+         native_source = None
+     return ReferenceAudio(
+diff --git a/tests/integration/test_real_native_sopro.py b/tests/integration/test_real_native_sopro.py
+index cdc56e1..4a208a5 100644
+--- a/tests/integration/test_real_native_sopro.py
++++ b/tests/integration/test_real_native_sopro.py
+@@ -122,7 +122,9 @@ def test_real_native_multilingual_reuse_stream_and_write(tmp_path):
+         stream_voice = runtime.prepare_voice(reference, stream=True)
+         chunks = list(
+             runtime.stream(
+-                SynthesisRequest(id="native-stream", text="Hello from native streaming.", language="en"),
++                SynthesisRequest(
++                    id="native-stream", text="Hello from native streaming.", language="en"
++                ),
+                 voice=stream_voice,
+                 config=config,
+                 chunk_frames=64,
+diff --git a/tests/test_calibration.py b/tests/test_calibration.py
+index efe0195..bc4399e 100644
+--- a/tests/test_calibration.py
++++ b/tests/test_calibration.py
+@@ -161,9 +161,7 @@ def test_voice_level_rejects_off_override_and_unrepresentable_gain():
+     invalid_config = VoiceLevelConfig(mode="calibrated", gain_db=6.0)
+     object.__setattr__(invalid_config, "mode", "off")
+     with pytest.raises(InvalidGenerationConfigError, match="gain_db requires"):
+-        apply_voice_level_calibration(
+-            audio, invalid_config, identity=None, catalog={}
+-        )
++        apply_voice_level_calibration(audio, invalid_config, identity=None, catalog={})
+
+
+ class _NativeEngine:
+diff --git a/tests/test_calibration_builder.py b/tests/test_calibration_builder.py
+index ba4e2e6..f785a73 100644
+--- a/tests/test_calibration_builder.py
++++ b/tests/test_calibration_builder.py
+@@ -118,7 +118,6 @@ def test_calibration_builder_import_error_is_actionable(monkeypatch):
+         measure_audio_files(["not-read-without-audiosig.wav"])
+
+
+-
+ def test_calibration_cli_writes_reviewable_catalog_outside_production(tmp_path):
+     pytest.importorskip("audiosig")
+     rate = 48000
+@@ -132,31 +131,34 @@ def test_calibration_cli_writes_reviewable_catalog_outside_production(tmp_path):
+         output.writeframes((samples * 32767).astype("<i2").tobytes())
+     destination = tmp_path / "reviewable-calibration.json"
+
+-    assert main(
+-        [
+-            "--backend",
+-            "native",
+-            "--model-id",
+-            "samuel-vitorino/sopro-v2-turbo",
+-            "--revision",
+-            "a" * 40,
+-            "--audio",
+-            str(source),
+-            "--corpus",
+-            "fixture corpus",
+-            "--license",
+-            "CC0-1.0",
+-            "--provenance",
+-            "fixture source and run id",
+-            "--target-lufs",
+-            "-16",
+-            "--max-true-peak-dbtp",
+-            "-1",
+-            "--output",
+-            str(destination),
+-            "--i-have-rights",
+-        ]
+-    ) == 0
++    assert (
++        main(
++            [
++                "--backend",
++                "native",
++                "--model-id",
++                "samuel-vitorino/sopro-v2-turbo",
++                "--revision",
++                "a" * 40,
++                "--audio",
++                str(source),
++                "--corpus",
++                "fixture corpus",
++                "--license",
++                "CC0-1.0",
++                "--provenance",
++                "fixture source and run id",
++                "--target-lufs",
++                "-16",
++                "--max-true-peak-dbtp",
++                "-1",
++                "--output",
++                str(destination),
++                "--i-have-rights",
++            ]
++        )
++        == 0
++    )
+     raw = json.loads(destination.read_text(encoding="utf-8"))
+     assert raw["schema"] == 2
+     assert len(raw["records"]) == 1
+diff --git a/tests/test_release_checks.py b/tests/test_release_checks.py
+index de4e7d9..cdfed5f 100644
+--- a/tests/test_release_checks.py
++++ b/tests/test_release_checks.py
+@@ -19,13 +19,9 @@ def _make_wheel(
+     metadata_version="0.1.0",
+ ):
+     path = directory / filename
+-    metadata = (
+-        f"Metadata-Version: 2.4\nName: {name}\nVersion: {metadata_version}\n"
+-    ).encode()
++    metadata = (f"Metadata-Version: 2.4\nName: {name}\nVersion: {metadata_version}\n").encode()
+     with zipfile.ZipFile(path, "w") as archive:
+-        archive.writestr(
+-            f"soprosynth-{dist_info_version}.dist-info/METADATA", metadata
+-        )
++        archive.writestr(f"soprosynth-{dist_info_version}.dist-info/METADATA", metadata)
+     return path
+
+
+@@ -84,7 +80,6 @@ def test_release_artifact_verifier_rejects_metadata_or_sdist_root_mismatch(tmp_p
+         verify_release_artifacts("v0.1.0", tmp_path)
+
+
+-
+ def test_release_artifact_verifier_rejects_embedded_metadata_version_mismatch(tmp_path):
+     _make_wheel(tmp_path, metadata_version="0.1.1")
+     _make_sdist(tmp_path)
+@@ -93,7 +88,6 @@ def test_release_artifact_verifier_rejects_embedded_metadata_version_mismatch(tm
+         verify_release_artifacts("v0.1.0", tmp_path)
+
+
+-
+ def test_release_artifact_verifier_rejects_mismatched_wheel_dist_info(tmp_path):
+     _make_wheel(tmp_path, dist_info_version="0.1.1")
+     _make_sdist(tmp_path)
+diff --git a/tests/test_voice.py b/tests/test_voice.py
+index 833a865..85463af 100644
+--- a/tests/test_voice.py
++++ b/tests/test_voice.py
+@@ -73,7 +73,6 @@ def test_linear_resampling_of_tuple_audio():
+     assert loaded.audio.tolist() == pytest.approx([0.0, 0.5, 1.0, 1.0])
+
+
+-
+ def test_audiosig_resampling_is_opt_in_anti_aliased_and_rate_correct():
+     pytest.importorskip("audiosig")
+     source_rate = 48000

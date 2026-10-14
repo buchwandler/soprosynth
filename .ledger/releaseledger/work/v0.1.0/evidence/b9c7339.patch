@@ -1,0 +1,15 @@
+ pyproject.toml | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/pyproject.toml b/pyproject.toml
+index c0e7aec..3404a3d 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -34,6 +34,7 @@ fallback_version = "0.0.0"
+ local_scheme = "no-local-version"
+ [tool.pytest.ini_options]
+ testpaths = ["tests"]
++pythonpath = ["."]
+ [tool.ruff]
+ target-version = "py310"
+ line-length = 100

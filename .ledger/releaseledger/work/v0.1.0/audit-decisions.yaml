@@ -1,0 +1,190 @@
+rows:
+  - sha: b5a71a6cef62f007648bb941432bda44e22efe19
+    inspected: true
+    inspected_paths: [.gitignore, LICENSE, README.md]
+    observed_behavior: Established repository ignore rules, licensing, and initial project documentation; no shipped runtime behavior.
+    public_impact: none
+    decision: internal
+    target_entry_key: null
+    target_entry_id: null
+    notes: Repository baseline only.
+    stale: false
+  - sha: 3dd2d379996a762ed8ee4d6cd922c4c3446d016b
+    inspected: true
+    inspected_paths:
+      [
+        README.md,
+        pyproject.toml,
+        soprosynth/__init__.py,
+        soprosynth/__main__.py,
+        soprosynth/api.py,
+        soprosynth/onnx.py,
+        soprosynth/errors.py,
+        tests/test_api.py,
+        tests/test_onnx.py,
+      ]
+    observed_behavior: Introduced the typed synthesis request/result surface, runtime lifecycle, WAV output, CLI entry point, and local ONNX bundle adapter with validation tests.
+    public_impact: public
+    decision: accepted
+    target_entry_key: runtime
+    target_entry_id: null
+    notes: Initial public runtime foundation; later backend changes are covered by the same final runtime entry.
+    stale: false
+  - sha: 7f0b08158c9ba51a4ca6ea705497b168532c1d58
+    inspected: true
+    inspected_paths:
+      [
+        README.md,
+        pyproject.toml,
+        soprosynth/__init__.py,
+        soprosynth/__main__.py,
+        soprosynth/_onnxvoice.py,
+        soprosynth/api.py,
+        soprosynth/config.py,
+        soprosynth/discovery.py,
+        soprosynth/types.py,
+        tests/test_api.py,
+        tests/test_cli.py,
+        tests/test_onnx.py,
+      ]
+    observed_behavior: Expanded the public runtime around managed ONNXVoice assets, backend diagnostics, prepared references, discovery, generation controls, CLI options, and explicit capability boundaries.
+    public_impact: public
+    decision: accepted
+    target_entry_key: runtime
+    target_entry_id: null
+    notes: Reviewed with subsequent removal of the native backend; final release prose describes the resulting ONNXVoice runtime.
+    stale: false
+  - sha: 7d03a5823d67d104a91a35c4a9d12260df95f3d3
+    inspected: true
+    inspected_paths:
+      [
+        README.md,
+        pyproject.toml,
+        soprosynth/api.py,
+        soprosynth/calibration.py,
+        soprosynth/calibration_builder.py,
+        soprosynth/voice.py,
+        soprosynth/types.py,
+        tests/test_calibration.py,
+        tests/test_calibration_builder.py,
+        tests/test_voice.py,
+      ]
+    observed_behavior: Added reviewable voice-level calibration records and a calibration builder, explicit reference resampling choices, capability metadata, and release artifact validation coverage.
+    public_impact: public
+    decision: accepted
+    target_entry_key: calibration
+    target_entry_id: null
+    notes: Calibration catalog remains empty unless supplied with measured licensed data.
+    stale: false
+  - sha: caaa4925115d94838a63f1400b1afbdbe2e29859
+    inspected: true
+    inspected_paths:
+      [
+        .github/workflows,
+        .pre-commit-config.yaml,
+        scripts/check_release_artifacts.py,
+        soprosynth/calibration.py,
+        soprosynth/config.py,
+        soprosynth/types.py,
+        soprosynth/voice.py,
+        tests,
+      ]
+    observed_behavior: Hardened CI, pre-commit, calibration, configuration, and test behavior without adding a distinct user-facing capability.
+    public_impact: internal
+    decision: internal
+    target_entry_key: null
+    target_entry_id: null
+    notes: Internal quality and automation maintenance.
+    stale: false
+  - sha: b9c7339c5563c716237c77bed1f798461c03a846
+    inspected: true
+    inspected_paths: [pyproject.toml]
+    observed_behavior: Adjusted package configuration for repository path handling; no distinct user-facing behavior.
+    public_impact: internal
+    decision: internal
+    target_entry_key: null
+    target_entry_id: null
+    notes: Packaging maintenance.
+    stale: false
+  - sha: 7759148cd188f213f67d5ff5a4a0d059af898d93
+    inspected: true
+    inspected_paths:
+      [
+        README.md,
+        START_HERE.md,
+        pyproject.toml,
+        soprosynth/__init__.py,
+        soprosynth/__main__.py,
+        soprosynth/_onnxvoice.py,
+        soprosynth/api.py,
+        soprosynth/discovery.py,
+        soprosynth/types.py,
+        soprosynth/voice.py,
+        tests,
+      ]
+    observed_behavior: Consolidated the shipped runtime on ONNXVoice, removed native inference dependencies and APIs, and retained explicit discovery, inspection, calibration identity, and capability-boundary behavior.
+    public_impact: public
+    decision: accepted
+    target_entry_key: runtime
+    target_entry_id: null
+    notes: Final backend boundary for this release.
+    stale: false
+  - sha: a9de1907c4c825be8709fc97d2b9d039164f6038
+    inspected: true
+    inspected_paths:
+      [
+        README.md,
+        pyproject.toml,
+        soprosynth/api.py,
+        soprosynth/_onnxvoice.py,
+        soprosynth/postprocess.py,
+        soprosynth/config.py,
+        soprosynth/voice.py,
+        tests/test_postprocess.py,
+        tests/test_sopro_orchestration.py,
+      ]
+    observed_behavior: Added Sopro-compatible text segmentation and native/raw output conditioning with gain, trimming, fades, limiting, result metadata, and explicit raw-mode behavior.
+    public_impact: public
+    decision: accepted
+    target_entry_key: output
+    target_entry_id: null
+    notes: Reviewed against focused postprocessing and orchestration tests.
+    stale: false
+  - sha: 333bf6a9a8d31dc9912c202ac8a9665d1171fdad
+    inspected: true
+    inspected_paths:
+      [
+        README.md,
+        pyproject.toml,
+        soprosynth/__init__.py,
+        soprosynth/_onnxvoice.py,
+        soprosynth/api.py,
+        soprosynth/postprocess.py,
+        soprosynth/types.py,
+        tests/test_streaming.py,
+        tests/test_streaming_conditioner.py,
+        tests/test_sopro_orchestration.py,
+      ]
+    observed_behavior: Added synchronous streaming and prewarm APIs, incremental conditioning and chunk metadata, semantic carry through long text, and released-wheel integration gating.
+    public_impact: public
+    decision: accepted
+    target_entry_key: streaming
+    target_entry_id: null
+    notes: Streaming methods are implemented but capability flags remain gated by the documented real-model integration condition.
+    stale: false
+  - sha: dc92b04f5cd54eb39fd7ebb456cac4eeb1636281
+    inspected: true
+    inspected_paths:
+      [
+        .github/workflows/python-publish.yml,
+        .github/workflows/tests.yml,
+        pyproject.toml,
+        tests/test_wheel_metadata.py,
+      ]
+    observed_behavior: Tightened CI and wheel metadata checks; no distinct user-facing runtime behavior.
+    public_impact: internal
+    decision: internal
+    target_entry_key: null
+    target_entry_id: null
+    notes: Internal release automation maintenance.
+    stale: false
