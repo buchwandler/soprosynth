@@ -36,16 +36,28 @@ class GenerationConfig:
     steps: int | None = None
     max_seconds: float | None = None
     min_seconds: float | None = None
+    seed: int | None = None
+    text_chunk_size: int | None = None
 
     def __post_init__(self) -> None:
-        if self.temperature is not None and _number("temperature", self.temperature) <= 0:
-            raise InvalidGenerationConfigError("temperature must be positive")
-        if self.top_p is not None and not 0 < _number("top_p", self.top_p) <= 1:
-            raise InvalidGenerationConfigError("top_p must be in (0, 1]")
-        for name in ("top_k", "steps"):
+        if self.temperature is not None and _number("temperature", self.temperature) < 0:
+            raise InvalidGenerationConfigError("temperature must be non-negative")
+        if self.top_p is not None and not 0 <= _number("top_p", self.top_p) <= 1:
+            raise InvalidGenerationConfigError("top_p must be in [0, 1]")
+        for name, minimum in (("top_k", 0), ("steps", 1)):
             value = getattr(self, name)
-            if value is not None and (type(value) is not int or value < 1):
-                raise InvalidGenerationConfigError(f"{name} must be an integer >= 1")
+            if value is not None and (type(value) is not int or value < minimum):
+                raise InvalidGenerationConfigError(f"{name} must be an integer >= {minimum}")
+        for name in ("seed", "text_chunk_size"):
+            value = getattr(self, name)
+            minimum, maximum = (0, 2**32 - 1) if name == "seed" else (1, None)
+            if value is not None and (
+                type(value) is not int
+                or value < minimum
+                or (maximum is not None and value > maximum)
+            ):
+                bounds = f"[{minimum}, {maximum}]" if maximum is not None else f">= {minimum}"
+                raise InvalidGenerationConfigError(f"{name} must be an integer {bounds}")
         if self.max_seconds is not None and _number("max_seconds", self.max_seconds) <= 0:
             raise InvalidGenerationConfigError("max_seconds must be positive")
         if self.min_seconds is not None and _number("min_seconds", self.min_seconds) < 0:
@@ -68,6 +80,7 @@ class GenerationConfig:
                 ("steps", self.steps),
                 ("max_seconds", self.max_seconds),
                 ("min_seconds", self.min_seconds),
+                ("seed", self.seed),
             )
             if value is not None
         }

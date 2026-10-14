@@ -280,6 +280,35 @@ def calibration_key(identity: Mapping[str, Any] | None) -> str | None:
     return f"onnx:sopro:{canonical_model}:{revision}:{profile}"
 
 
+def voice_level_gain_scale(gain_db: float) -> np.float32:
+    """Resolve and validate a static voice-level gain for reuse across chunks."""
+    try:
+        scale_value = 10.0 ** (gain_db / 20.0)
+    except OverflowError as exc:
+        raise InvalidGenerationConfigError(
+            "voice-level gain produces an unrepresentable scale"
+        ) from exc
+    float32 = np.finfo(np.float32)
+    if (
+        not math.isfinite(scale_value)
+        or scale_value > float(float32.max)
+        or scale_value < float(float32.smallest_subnormal)
+    ):
+        raise InvalidGenerationConfigError("voice-level gain produces an unrepresentable scale")
+    scale = np.float32(scale_value)
+    if not np.isfinite(scale):
+        raise InvalidGenerationConfigError("voice-level gain produces an unrepresentable scale")
+    return scale
+
+
+def apply_voice_level_gain(audio: Any, scale: np.float32) -> np.ndarray:
+    """Apply one previously resolved static scale without reloading policy data."""
+    output = np.asarray(audio, dtype=np.float32) * scale
+    if not np.isfinite(output).all():
+        raise InvalidGenerationConfigError("voice-level gain produces non-finite audio")
+    return np.ascontiguousarray(output, dtype=np.float32)
+
+
 def apply_voice_level_calibration(
     audio: Any,
     config: VoiceLevelConfig,
@@ -324,25 +353,8 @@ def apply_voice_level_calibration(
             gain_db = float(record_gain)
             source = "catalog"
 
-    try:
-        scale_value = 10.0 ** (gain_db / 20.0)
-    except OverflowError as exc:
-        raise InvalidGenerationConfigError(
-            "voice-level gain produces an unrepresentable scale"
-        ) from exc
-    float32 = np.finfo(np.float32)
-    if (
-        not math.isfinite(scale_value)
-        or scale_value > float(float32.max)
-        or scale_value < float(float32.smallest_subnormal)
-    ):
-        raise InvalidGenerationConfigError("voice-level gain produces an unrepresentable scale")
-    scale = np.float32(scale_value)
-    if not np.isfinite(scale):
-        raise InvalidGenerationConfigError("voice-level gain produces an unrepresentable scale")
-    output = np.asarray(audio, dtype=np.float32) * scale
-    if not np.isfinite(output).all():
-        raise InvalidGenerationConfigError("voice-level gain produces non-finite audio")
+    scale = voice_level_gain_scale(gain_db)
+    output = apply_voice_level_gain(audio, scale)
     application = VoiceLevelApplication(
         mode=config.mode,
         gain_db=gain_db,

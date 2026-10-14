@@ -24,6 +24,19 @@ class FakeEngine:
     providers = "cpu"
     manifest: ClassVar[dict[str, str]] = {"revision": "upstream-revision"}
 
+    generation_defaults = SimpleNamespace(
+        temperature=0.8,
+        top_p=0.9,
+        top_k=25,
+        steps=32,
+        max_seconds=30.0,
+        min_seconds=0.0,
+        ref_seconds=10.0,
+    )
+    fixed_steps = 32
+    max_segment_chars = 300
+    token_samples = 1024
+
     def __init__(self, installation=None):
         self.installation = installation or SimpleNamespace(
             ref="sopro:v2-turbo",
@@ -34,8 +47,13 @@ class FakeEngine:
         self.reference_level = -21.25
         self.infer_metadata = {}
 
-    def prepare_voice(self, waveform, sample_rate):
+        self.run_args = None
+        self.run_closed = False
+        self.prepare_seconds = []
+
+    def prepare_voice(self, waveform, sample_rate, *, seconds=None):
         assert sample_rate == 24000
+        self.prepare_seconds.append(seconds)
         return {"reference_samples": len(waveform), "level_db": self.reference_level}
 
     def prepare_text(self, text, language=None):
@@ -46,6 +64,10 @@ class FakeEngine:
         return SimpleNamespace(
             audio=np.array([0.1, -0.1], dtype=np.float32), metadata=self.infer_metadata
         )
+
+    def begin_run(self, voice_state, *, language=None, **generation):
+        self.run_args = (voice_state, language, generation)
+        return FakeSoproRun(self, voice_state, language, generation)
 
     def diagnostics(self):
         session = SimpleNamespace(
@@ -59,6 +81,26 @@ class FakeEngine:
 
     def close(self):
         self.closed = True
+
+
+class FakeSoproRun:
+    def __init__(self, engine, voice_state, language, generation):
+        self.engine = engine
+        self.voice_state = voice_state
+        self.language = language
+        self.generation = generation
+
+    def infer_segment(self, text, *, language=None):
+        text_input = self.engine.prepare_text(text, language=language or self.language)
+        return self.engine.infer(
+            text_input.token_ids,
+            voice_state=self.voice_state,
+            language=text_input.language,
+            **self.generation,
+        )
+
+    def close(self):
+        self.engine.run_closed = True
 
 
 class FakeManager:
@@ -103,8 +145,17 @@ def test_managed_runtime_uses_onnxvoice_and_public_api(monkeypatch):
     assert manager.install_args[1]["quality"] == "wasm-uint8"
     assert manager.open_args[1]["provider_options"]["CPUExecutionProvider"]
 
-    voice = runtime.prepare_voice((np.array([0.1, -0.1], dtype=np.float32), 24000))
+    voice = runtime.prepare_voice(
+        (np.array([0.1, -0.1], dtype=np.float32), 24000), reference_seconds=4.5
+    )
     assert voice.metadata["reference_level_db"] == -21.25
+    assert engine.prepare_seconds == [4.5]
+    assert voice.metadata["reference_seconds"] == 4.5
+    backend = runtime._engine
+    assert backend.generation_defaults is engine.generation_defaults
+    assert backend.fixed_steps == engine.fixed_steps == 32
+    assert backend.max_segment_chars == engine.max_segment_chars == 300
+    assert backend.token_samples == engine.token_samples == 1024
     result = runtime.synthesize(
         SynthesisRequest("req-1", "Hello", language="en"),
         voice=voice,
@@ -124,38 +175,22 @@ def test_managed_runtime_uses_onnxvoice_and_public_api(monkeypatch):
     assert engine.closed
 
 
-def test_sopro_segment_adapter_forwards_prompt_and_reads_semantic_metadata():
+def test_sopro_run_adapter_forwards_generation_language_audio_and_close():
     engine = FakeEngine()
-    engine.infer_metadata = {
-        "generated_semantic_tokens": (2, 3, 4),
-        "prompt_token_limit": 2,
-    }
     backend = OnnxVoiceBackend(engine, profile="wasm-uint8", requested_providers="cpu")
 
-    result = backend.synthesize_segment(
-        "Hello",
-        ref={"voice": 1},
-        lang="en",
-        prompt_tokens=(8, 9),
-    )
+    run = backend.begin_run({"voice": 1}, language="en", seed=123, temperature=0.8)
+    audio = run.synthesize_segment("Hello")
+    run.close()
 
-    assert result.semantic_tokens == (2, 3, 4)
-    assert result.prompt_token_limit == 2
-    assert result.audio.tolist() == pytest.approx([0.1, -0.1])
+    assert engine.run_args == ({"voice": 1}, "en", {"seed": 123, "temperature": 0.8})
     assert engine.infer_args is not None
-    assert engine.infer_args[1]["prompt_tokens"] == (8, 9)
-
-
-def test_sopro_segment_adapter_reports_legacy_prompt_override_failure():
-    class LegacyEngine(FakeEngine):
-        def infer(self, token_ids, **kwargs):
-            if "prompt_tokens" in kwargs:
-                raise TypeError("unexpected prompt_tokens")
-            return super().infer(token_ids, **kwargs)
-
-    backend = OnnxVoiceBackend(LegacyEngine(), profile="wasm-uint8", requested_providers="cpu")
-    with pytest.raises(RuntimeCapabilityError, match="upgrade ONNXVoice"):
-        backend.synthesize_segment("Second", ref={"voice": 1}, prompt_tokens=(8, 9))
+    assert engine.infer_args[0] == (11, 12)
+    assert engine.infer_args[1]["voice_state"] == {"voice": 1}
+    assert engine.infer_args[1]["language"] == "en"
+    assert audio.dtype == np.float32 and audio.flags.c_contiguous
+    assert audio.tolist() == pytest.approx([0.1, -0.1])
+    assert engine.run_closed is True
 
 
 @pytest.mark.parametrize(
@@ -188,7 +223,7 @@ def test_prepared_voice_excludes_invalid_reference_level_metadata(level):
     voice = runtime.prepare_voice((np.array([0.1, -0.1], dtype=np.float32), 24000))
 
     assert "reference_level_db" not in voice.metadata
-    assert all(type(value) is int for value in voice.metadata.values())
+    assert voice.metadata["reference_seconds"] == 10.0
     runtime.close()
 
 

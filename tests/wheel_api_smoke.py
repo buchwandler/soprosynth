@@ -15,6 +15,7 @@ required = (
     "RuntimeCapabilities",
     "request_api_contract",
     "SynthesisRequest",
+    "SynthesisChunk",
     "SynthesisResult",
     "GenerationConfig",
     "PreparedVoice",
@@ -25,6 +26,9 @@ required = (
 )
 for name in required:
     assert hasattr(soprosynth, name), name
+assert callable(soprosynth.SoproRuntime.stream)
+assert callable(soprosynth.SoproRuntime.stream_text)
+assert callable(soprosynth.SoproRuntime.prepare_streaming)
 assert soprosynth.REQUEST_API_VERSION == 1
 contract = soprosynth.request_api_contract()
 assert contract.version == 1

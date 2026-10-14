@@ -158,11 +158,23 @@ class _FakeEngine:
     sample_rate = 24000
     profile = "wasm-uint8"
 
-    def prepare_reference(self, reference):
+    def prepare_reference(self, reference, *, seconds=None):
         return {"prepared": True}
 
     def reference_level_db(self, state):
         return -23.0
+
+    def begin_run(self, state, *, language=None, **generation):
+        engine = self
+
+        class Run:
+            def synthesize_segment(self, text):
+                return engine.synthesize(text)
+
+            def close(self):
+                pass
+
+        return Run()
 
     def synthesize(self, text, **kwargs):
         return np.array([0.75, -0.75], dtype=np.float32)

@@ -18,15 +18,15 @@ reference voice: required
 output mode: native-compatible conditioning by default; raw is opt-in
 reference samples: forwarded at their original rate by default
 model-quality claim: `wasm-uint8` is quantized; no native-PyTorch parity claim
-streaming: not supported
+synchronous streaming API is implemented; capability remains gated by the released-wheel real-model test
 ```
 
-SoproSynth has no runtime dependency on the native `sopro` Python package. It segments long text and carries semantic tokens between segments when the installed ONNXVoice runtime exposes that contract. The `native` output name describes DSP conditioning only; it does not describe the model's quality tier.
+SoproSynth executes Sopro through ONNXVoice and Python ONNX Runtime, with no native `sopro` inference backend. SoproSynth segments long text; ONNXVoice owns semantic-token carry between segments. The `native` output name describes DSP conditioning only; it does not describe the model's quality tier.
 Use only reference recordings whose rights and license permit your intended use. SoproSynth does not grant rights to recordings or generated speech.
 
 ## Synthesis examples
 
-- `quickstart.py` — one request using the default ONNXVoice runtime settings.
+- `quickstart.py` — offline synthesis plus optional ONNXVoice streaming prewarm and chunk iteration.
 - `strict_request.py` — the structured request/result API and generation configuration.
 - `prepared_voice.py` — reuses prepared reference state within one runtime only.
 - `multilingual.py` — explicit `en`, `pt`, `fr`, and `de` language labels; no language detection or quality guarantee.

@@ -62,5 +62,6 @@ def request_api_contract() -> RequestApiContract:
         supports_voice_level=True,
         supports_sopro_output_policy=True,
         supports_request_measurement=True,
+        # Streaming methods are implemented; advertise only after the released-wheel gate passes.
         supports_streaming=False,
     )

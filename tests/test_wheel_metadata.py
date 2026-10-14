@@ -48,6 +48,13 @@ def test_wheel_has_core_audiosig_and_no_upstream_sopro_requirement(built_wheel):
     requirements = [Requirement(value) for value in metadata.get_all("Requires-Dist", [])]
     assert all(requirement.name.lower() != "sopro" for requirement in requirements)
 
+    onnxvoice = [
+        requirement for requirement in requirements if requirement.name.lower() == "onnxvoice"
+    ]
+    assert len(onnxvoice) == 1
+    assert onnxvoice[0].extras == {"cpu"}
+    assert onnxvoice[0].specifier.contains("0.2.7")
+    assert not onnxvoice[0].specifier.contains("0.2.6")
     audiosig = [
         requirement for requirement in requirements if requirement.name.lower() == "audiosig"
     ]

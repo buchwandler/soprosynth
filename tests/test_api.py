@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+from types import SimpleNamespace
 from typing import Any, cast
 
 import numpy as np
@@ -58,13 +59,30 @@ class FakeEngine:
     model_id = "sopro:v2-turbo"
     source_revision = "revision-1"
 
+    fixed_steps = 32
+    max_segment_chars = 300
+    token_samples = 1024
+    generation_defaults = SimpleNamespace(
+        temperature=0.8,
+        top_p=0.9,
+        top_k=25,
+        steps=32,
+        max_seconds=30.0,
+        min_seconds=0.0,
+        ref_seconds=10.0,
+    )
+
     def __init__(self):
         self.prepared = []
+        self.prepared_seconds = []
         self.measured = []
         self.closed = False
+        self.run_args = None
+        self.run_closed = False
 
-    def prepare_reference(self, reference):
+    def prepare_reference(self, reference, *, seconds=None):
         self.prepared.append(reference)
+        self.prepared_seconds.append(seconds)
         return {"voice": len(self.prepared)}
 
     def reference_level_db(self, state):
@@ -73,6 +91,19 @@ class FakeEngine:
     def measure_text(self, text, language=None):
         self.measured.append((text, language))
         return 2
+
+    def begin_run(self, state, *, language=None, **generation):
+        self.run_args = (state, language, generation)
+        engine = self
+
+        class Run:
+            def synthesize_segment(self, text):
+                return engine.synthesize(text, lang=language, ref=state, **generation)
+
+            def close(self):
+                engine.run_closed = True
+
+        return Run()
 
     def synthesize(self, text, **kwargs):
         assert text == "hello"
@@ -121,6 +152,8 @@ def test_from_pretrained_routes_to_onnxvoice_with_canonical_defaults(monkeypatch
     request = SynthesisRequest("request-1", "hello", language="de")
     result = runtime.synthesize(request, voice=voice)
     assert result.audio.tolist() == pytest.approx([0.25, -0.25])
+    assert engine.run_args == (voice.state, "de", {})
+    assert engine.run_closed is True
     assert result.metadata["backend"] == "onnx"
     measured = runtime.measure_request(request, maximum=2)
     assert measured.amount == 2 and measured.fits is True
@@ -149,6 +182,7 @@ def test_prepare_voice_preserves_source_rate_and_runtime_identity(sample_rate):
     assert voice.metadata == {
         "reference_sample_rate": sample_rate,
         "prepared_reference_sample_rate": sample_rate,
+        "reference_seconds": 10.0,
         "reference_level_db": -23.0,
     }
     result = runtime.synthesize(
@@ -173,8 +207,28 @@ def test_explicit_legacy_resampling_preserves_source_identity():
     assert voice.metadata == {
         "reference_sample_rate": 48000,
         "prepared_reference_sample_rate": 24000,
+        "reference_seconds": 10.0,
         "reference_level_db": -23.0,
     }
+    runtime.close()
+
+
+def test_prepare_voice_forwards_and_validates_reference_seconds():
+    engine = FakeEngine()
+    runtime = SoproRuntime(engine)
+    voice = runtime.prepare_voice(
+        (np.array([0.1, -0.1], dtype=np.float32), 24000), reference_seconds=3.5
+    )
+    assert engine.prepared_seconds == [3.5]
+    assert voice.metadata["reference_seconds"] == 3.5
+
+    for invalid in (0, -1, float("nan"), float("inf"), True, "3"):
+        with pytest.raises(InvalidGenerationConfigError, match="reference_seconds"):
+            runtime.prepare_voice(
+                (np.array([0.1, -0.1], dtype=np.float32), 24000),
+                reference_seconds=invalid,
+            )
+    assert engine.prepared_seconds == [3.5]
     runtime.close()
 
 
@@ -192,7 +246,10 @@ def test_public_api_has_only_onnxvoice_runtime_controls():
     }
     voice_params = inspect.signature(SoproRuntime.prepare_voice).parameters
     assert "stream" not in voice_params
-    assert not hasattr(SoproRuntime(FakeEngine()), "stream")
+    runtime = SoproRuntime(FakeEngine())
+    assert callable(runtime.stream)
+    assert callable(runtime.stream_text)
+    assert runtime.capabilities.supports_streaming is False
 
 
 def test_prepared_voice_remains_runtime_bound():

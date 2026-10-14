@@ -171,6 +171,31 @@ class WordTiming:
             raise InvalidRequestError("word timing end must not precede its start")
 
 
+@dataclass(frozen=True, slots=True)
+class SynthesisChunk:
+    """One validated, immutable mono-audio item from a streaming synthesis request."""
+
+    id: str
+    audio: np.ndarray
+    sample_rate: int
+    index: int
+    segment_index: int
+    is_final: bool
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        _valid_id(self.id)
+        object.__setattr__(self, "audio", _validated_audio(self.audio))
+        _sample_rate(self.sample_rate)
+        for name in ("index", "segment_index"):
+            value = getattr(self, name)
+            if type(value) is not int or value < 0:
+                raise InvalidRequestError(f"{name} must be a non-negative integer")
+        if type(self.is_final) is not bool:
+            raise InvalidRequestError("is_final must be a bool")
+        object.__setattr__(self, "metadata", _immutable_mapping(self.metadata, label="metadata"))
+
+
 @dataclass(slots=True)
 class SynthesisResult:
     id: str

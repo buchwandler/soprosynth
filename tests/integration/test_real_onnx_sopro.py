@@ -12,13 +12,19 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from soprosynth import GenerationConfig, SoproRuntime, SynthesisRequest, __version__
+from soprosynth import (
+    GenerationConfig,
+    SoproOutputConfig,
+    SoproRuntime,
+    SynthesisRequest,
+    __version__,
+)
 
 _RUN_REAL_ONNX = os.environ.get("SOPROSYNTH_RUN_REAL_ONNX_TESTS") == "1"
 pytestmark = pytest.mark.skipif(
     not _RUN_REAL_ONNX,
     reason=(
-        "set SOPROSYNTH_RUN_REAL_ONNX_TESTS=1 with released ONNXVoice >=0.2.6,<0.3, "
+        "set SOPROSYNTH_RUN_REAL_ONNX_TESTS=1 with released ONNXVoice >=0.2.7,<0.3, "
         "compatible model assets and licensed reference audio"
     ),
 )
@@ -40,8 +46,8 @@ def _require_released_onnxvoice() -> str:
             pytest.fail("ONNX integration gate must use a released wheel, not an editable checkout")
     match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:\.post\d+)?", version)
     parsed = tuple(int(component) for component in match.groups()) if match else None
-    if parsed is None or not (0, 2, 6) <= parsed < (0, 3, 0):
-        pytest.fail(f"ONNX integration requires released ONNXVoice >=0.2.6,<0.3; found {version}")
+    if parsed is None or not (0, 2, 7) <= parsed < (0, 3, 0):
+        pytest.fail(f"ONNX integration requires released ONNXVoice >=0.2.7,<0.3; found {version}")
     return version
 
 
@@ -52,6 +58,25 @@ def _check_audio(result) -> None:
     assert result.sample_rate == 24000
 
 
+def _check_stream(chunks) -> np.ndarray:
+    assert len(chunks) > 1
+    assert [chunk.index for chunk in chunks] == list(range(len(chunks)))
+    assert sum(chunk.is_final for chunk in chunks) == 1
+    assert chunks[-1].is_final
+    assert all(chunk.sample_rate == 24_000 for chunk in chunks)
+    assert all(
+        chunk.audio.ndim == 1
+        and chunk.audio.dtype == np.float32
+        and chunk.audio.flags.c_contiguous
+        and np.isfinite(chunk.audio).all()
+        for chunk in chunks
+    )
+    summary = chunks[-1].metadata
+    assert summary["chunk_count"] == len(chunks)
+    assert summary["audio_samples_total"] == sum(chunk.audio.size for chunk in chunks)
+    return np.concatenate([chunk.audio for chunk in chunks])
+
+
 def test_real_onnx_managed_install_offline_reopen_reference_and_synthesis(tmp_path, monkeypatch):
     onnxvoice_version = _require_released_onnxvoice()
     reference = os.environ.get("SOPROSYNTH_REAL_ONNX_REFERENCE")
@@ -60,6 +85,13 @@ def test_real_onnx_managed_install_offline_reopen_reference_and_synthesis(tmp_pa
     model = os.environ.get("SOPROSYNTH_REAL_ONNX_MODEL", "sopro:v2-turbo")
     profile = os.environ.get("SOPROSYNTH_REAL_ONNX_PROFILE", "wasm-uint8")
 
+    stream_text = (
+        "Streaming integration exercises multiple model chunks while preserving one prepared voice. "
+        "Audio is consumed incrementally rather than collected by SoproSynth."
+    )
+    stream_config = GenerationConfig(seed=1234)
+    raw_output = SoproOutputConfig(mode="raw")
+    cold_audio: np.ndarray | None = None
     with SoproRuntime.from_pretrained(
         model=model,
         profile=profile,
@@ -75,6 +107,17 @@ def test_real_onnx_managed_install_offline_reopen_reference_and_synthesis(tmp_pa
         installed_diagnostics = runtime.diagnostics
         assert installed_diagnostics.backend == "onnx"
         assert "CPUExecutionProvider" in installed_diagnostics.providers_active
+        cold_chunks = list(
+            runtime.stream_text(
+                stream_text,
+                id="onnx-cold-stream",
+                language="en",
+                voice=voice,
+                config=stream_config,
+                output=raw_output,
+            )
+        )
+        cold_audio = _check_stream(cold_chunks)
 
     monkeypatch.setenv("HF_HUB_OFFLINE", "1")
     monkeypatch.setenv("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
@@ -92,6 +135,32 @@ def test_real_onnx_managed_install_offline_reopen_reference_and_synthesis(tmp_pa
         output = reopened_result.save_wav(tmp_path / "real-onnx.wav")
         assert reopened_diagnostics.backend == "onnx"
         assert "CPUExecutionProvider" in reopened_diagnostics.providers_active
+        runtime.prepare_streaming(voice, config=stream_config)
+        warm_chunks = list(
+            runtime.stream_text(
+                stream_text,
+                id="onnx-prewarmed-stream",
+                language="en",
+                voice=voice,
+                config=stream_config,
+                output=raw_output,
+            )
+        )
+        warm_audio = _check_stream(warm_chunks)
+        assert cold_audio is not None
+        np.testing.assert_allclose(warm_audio, cold_audio, rtol=1e-5, atol=1e-6)
+
+        native_chunks = list(
+            runtime.stream_text(
+                "Native streaming conditioning should produce finite audible output.",
+                id="onnx-native-stream",
+                language="en",
+                voice=voice,
+                config=stream_config,
+            )
+        )
+        native_audio = _check_stream(native_chunks)
+        assert float(np.max(np.abs(native_audio))) > 0.0
         with wave.open(str(output), "rb") as wav:
             assert wav.getnchannels() == 1
             assert wav.getframerate() == 24000

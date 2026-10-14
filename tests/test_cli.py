@@ -18,6 +18,7 @@ def test_info_reports_contract_and_runtime_identity_without_model(monkeypatch, c
     assert payload["api"]["supports_request_measurement"] is True
     assert payload["api"]["supports_sopro_output_policy"] is True
     assert payload["api"]["caller_owns_text_boundaries"] is False
+    # Intentionally false until the opt-in released-wheel real-model integration gate passes.
     assert payload["api"]["supports_streaming"] is False
     assert payload["runtime"] == identity
 

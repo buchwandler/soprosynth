@@ -10,10 +10,10 @@ from soprosynth.errors import InvalidGenerationConfigError
         {"temperature": float("nan")},
         {"temperature": float("inf")},
         {"temperature": True},
-        {"top_p": 0},
+        {"top_p": -0.01},
         {"top_p": 1.01},
         {"top_k": True},
-        {"top_k": 0},
+        {"top_k": -1},
         {"steps": 1.5},
         {"steps": 0},
         {"max_seconds": -1},
@@ -21,6 +21,11 @@ from soprosynth.errors import InvalidGenerationConfigError
         {"min_seconds": -0.1},
         {"min_seconds": True},
         {"min_seconds": 3, "max_seconds": 2},
+        {"seed": -1},
+        {"seed": 2**32},
+        {"seed": True},
+        {"text_chunk_size": 0},
+        {"text_chunk_size": False},
     ],
 )
 def test_invalid_generation_configs(kwargs):
@@ -28,13 +33,33 @@ def test_invalid_generation_configs(kwargs):
         GenerationConfig(**kwargs)
 
 
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        ({"temperature": 0}, 0.0),
+        ({"top_p": 0}, 0.0),
+        ({"top_k": 0}, 0),
+        ({"seed": 0}, 0),
+        ({"seed": 2**32 - 1}, 2**32 - 1),
+        ({"text_chunk_size": 1}, 1),
+    ],
+)
+def test_generation_config_accepts_strategy_a_boundaries(kwargs, expected):
+    config = GenerationConfig(**kwargs)
+    name = next(iter(kwargs))
+    assert getattr(config, name) == expected
+
+
 def test_inference_kwargs_omit_unspecified_controls():
-    config = GenerationConfig(temperature=0.7, top_p=0.9, top_k=12, max_seconds=3)
+    config = GenerationConfig(
+        temperature=0.7, top_p=0.9, top_k=12, max_seconds=3, seed=123, text_chunk_size=80
+    )
     assert config.as_inference_kwargs() == {
         "temperature": 0.7,
         "top_p": 0.9,
         "top_k": 12,
         "max_seconds": 3,
+        "seed": 123,
     }
 
 

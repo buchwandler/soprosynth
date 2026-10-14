@@ -11,6 +11,7 @@ soprosynth.request_api_contract()
 soprosynth.runtime_identity()
 assert soprosynth.REQUEST_API_VERSION == 1
 assert "sopro" not in sys.modules
+assert "torch" not in sys.modules
 assert "onnxruntime" not in sys.modules
 assert "onnxvoice" not in sys.modules
 """

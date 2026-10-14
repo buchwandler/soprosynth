@@ -3,6 +3,7 @@ from soprosynth import (
     RequestApiContract,
     RuntimeCapabilities,
     SoproRuntime,
+    SynthesisChunk,
     SynthesisRequest,
     SynthesisResult,
     request_api_contract,
@@ -16,6 +17,10 @@ def test_v1_request_contract():
     assert contract.request_type is SynthesisRequest
     assert contract.result_type is SynthesisResult
     assert contract.runtime_type is SoproRuntime
+    assert callable(SoproRuntime.stream)
+    assert callable(SoproRuntime.stream_text)
+    assert callable(SoproRuntime.prepare_streaming)
+    assert hasattr(SynthesisChunk, "__dataclass_fields__")
     assert contract.synthesis_method == "synthesize"
     assert contract.measurement_method == "measure_request"
     assert contract.discovery_method == "discover_bundles"
@@ -24,6 +29,7 @@ def test_v1_request_contract():
     assert contract.supports_sopro_output_policy is True
     assert contract.supports_reference_voice is True
     assert contract.supports_request_measurement is True
+    # This stays false until the released-wheel real-model integration gate passes.
     assert contract.supports_streaming is False
     assert contract.supports_linguistic_tokens is False
     assert contract.supports_pronunciation_overrides is False

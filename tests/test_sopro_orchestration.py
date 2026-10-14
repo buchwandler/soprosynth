@@ -5,8 +5,39 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from soprosynth import RuntimeCapabilityError, SoproRuntime, SynthesisRequest, VoiceLevelConfig
+from soprosynth import (
+    GenerationConfig,
+    ModelInferenceError,
+    RuntimeCapabilityError,
+    SoproRuntime,
+    SynthesisRequest,
+    VoiceLevelConfig,
+)
 from soprosynth.config import SoproOutputConfig
+
+
+class SegmentRun:
+    def __init__(self, engine, state, language, generation):
+        self.engine = engine
+        self.state = state
+        self.language = language
+        self.generation = generation
+        self.closed = False
+        self.segment_calls = []
+        engine.runs.append(self)
+
+    def synthesize_segment(self, text):
+        self.segment_calls.append(text)
+        self.engine.calls.append((text, self.language))
+        self.engine.generation_kwargs.append(dict(self.generation))
+        if self.engine.fail_on_segment == text:
+            raise RuntimeError("fixture inference failure")
+        output = self.engine.outputs.pop(0)
+        return np.asarray(output["audio"], dtype=np.float32)
+
+    def close(self):
+        self.closed = True
+        self.engine.closed_runs += 1
 
 
 class SegmentEngine:
@@ -16,26 +47,37 @@ class SegmentEngine:
     source_revision = "fixture-revision"
     max_segment_chars = 6
     token_samples = 32
+    fixed_steps = 8
+    generation_defaults = SimpleNamespace(
+        temperature=0.8,
+        top_p=0.9,
+        top_k=25,
+        steps=8,
+        max_seconds=30.0,
+        min_seconds=0.0,
+        ref_seconds=10.0,
+    )
 
     def __init__(self, outputs, *, reference_level=-23.0):
         self.outputs = list(outputs)
         self.reference_level = reference_level
         self.calls = []
+        self.generation_kwargs = []
+        self.reference_seconds = []
+        self.runs = []
+        self.closed_runs = 0
+        self.fail_on_segment = None
 
-    def prepare_reference(self, reference):
+    def prepare_reference(self, reference, *, seconds=None):
+        self.reference_seconds.append(seconds)
         return {"level_db": self.reference_level}
 
     def reference_level_db(self, state):
         return state.get("level_db")
 
-    def synthesize_segment(self, text, **kwargs):
-        self.calls.append((text, kwargs.get("prompt_tokens")))
-        output = self.outputs.pop(0)
-        return SimpleNamespace(
-            audio=output["audio"],
-            semantic_tokens=output.get("tokens"),
-            prompt_token_limit=output.get("limit"),
-        )
+    def begin_run(self, state, *, language=None, **generation):
+        self.run_arguments = (state, language, generation)
+        return SegmentRun(self, state, language, generation)
 
     def close(self):
         pass
@@ -45,12 +87,12 @@ def _voice(runtime):
     return runtime.prepare_voice((np.array([0.1, -0.1], dtype=np.float32), 1_000))
 
 
-def test_long_text_splits_normalizes_and_carries_last_prompt_window():
+def test_long_text_splits_and_uses_one_onnxvoice_run():
     engine = SegmentEngine(
         [
-            {"audio": np.array([0.1, 0.1], dtype=np.float32), "tokens": (10, 11, 12), "limit": 2},
-            {"audio": np.array([0.2, 0.2], dtype=np.float32), "tokens": (), "limit": 2},
-            {"audio": np.array([0.3, 0.3], dtype=np.float32), "tokens": (20, 21), "limit": 2},
+            {"audio": np.array([0.1, 0.1], dtype=np.float32)},
+            {"audio": np.array([0.2, 0.2], dtype=np.float32)},
+            {"audio": np.array([0.3, 0.3], dtype=np.float32)},
         ]
     )
     runtime = SoproRuntime(engine)
@@ -60,54 +102,100 @@ def test_long_text_splits_normalizes_and_carries_last_prompt_window():
         output=SoproOutputConfig(mode="raw"),
     )
     assert [text for text, _ in engine.calls] == ["One.", "Two.", "Three."]
-    assert [prompt for _, prompt in engine.calls] == [None, (11, 12), (11, 12)]
+    assert len(engine.runs) == 1
+    assert engine.runs[0].segment_calls == ["One.", "Two.", "Three."]
+    assert engine.runs[0].closed is True
+    assert all("prompt_tokens" not in run.generation for run in engine.runs)
     np.testing.assert_allclose(result.audio, [0.1, 0.1, 0.2, 0.2, 0.3, 0.3])
     assert result.metadata["sopro_output"]["mode"] == "raw"
     assert result.metadata["sopro_output"]["text_segment_count"] == 3
     runtime.close()
 
 
-def test_long_text_without_semantic_carry_contract_fails_before_inference():
-    class LegacyEngine:
-        sample_rate = 1_000
-        profile = "wasm-uint8"
-        max_segment_chars = 6
-
-        def __init__(self):
-            self.calls = 0
-
-        def prepare_reference(self, reference):
-            return object()
-
-        def synthesize(self, text, **kwargs):
-            self.calls += 1
-            return np.array([0.25], dtype=np.float32)
-
-        def close(self):
-            pass
-
-    engine = LegacyEngine()
+def test_text_chunk_override_seed_and_effective_generation():
+    engine = SegmentEngine(
+        [
+            {"audio": np.array([0.1], dtype=np.float32)},
+            {"audio": np.array([0.2], dtype=np.float32)},
+        ]
+    )
     runtime = SoproRuntime(engine)
-    with pytest.raises(RuntimeCapabilityError, match="semantic prompt carry"):
-        runtime.synthesize_text(
-            "One. Two. Three.",
-            voice=_voice(runtime),
-            output=SoproOutputConfig(mode="raw"),
-        )
-    assert engine.calls == 0
+    voice = _voice(runtime)
+    result = runtime.synthesize_text(
+        "One. Two. Three.",
+        voice=voice,
+        config=GenerationConfig(temperature=0.5, seed=123, text_chunk_size=10),
+        output=SoproOutputConfig(mode="raw"),
+    )
+    assert [text for text, _ in engine.calls] == ["One. Two.", "Three."]
+    assert [kwargs["seed"] for kwargs in engine.generation_kwargs] == [123, 123]
+    assert len(engine.runs) == 1
+    assert "text_chunk_size" not in engine.runs[0].generation
+    effective = result.metadata["effective_generation"]
+    assert effective == {
+        "temperature": 0.5,
+        "top_p": 0.9,
+        "top_k": 25,
+        "steps": 8,
+        "max_seconds": 30.0,
+        "min_seconds": 0.0,
+        "seed": 123,
+        "text_chunk_size": 10,
+        "reference_seconds": 10.0,
+    }
     runtime.close()
 
 
-def test_missing_semantic_metadata_fails_before_the_next_segment():
+def test_wrong_fixed_steps_fail_before_run_creation():
     engine = SegmentEngine([{"audio": np.array([0.1], dtype=np.float32)}])
     runtime = SoproRuntime(engine)
-    with pytest.raises(RuntimeCapabilityError, match="generated semantic tokens"):
+    with pytest.raises(RuntimeCapabilityError, match="fixed at 8"):
+        runtime.synthesize_text(
+            "Hello.",
+            voice=_voice(runtime),
+            config=GenerationConfig(steps=9),
+            output=SoproOutputConfig(mode="raw"),
+        )
+    assert engine.runs == []
+    runtime.close()
+
+
+def test_run_closes_when_middle_segment_fails():
+    engine = SegmentEngine(
+        [{"audio": np.array([0.1], dtype=np.float32)}],
+    )
+    engine.fail_on_segment = "Two."
+    runtime = SoproRuntime(engine)
+    with pytest.raises(ModelInferenceError, match="Sopro synthesis failed"):
         runtime.synthesize_text(
             "One. Two.",
             voice=_voice(runtime),
             output=SoproOutputConfig(mode="raw"),
         )
-    assert engine.calls == [("One.", None)]
+    assert len(engine.runs) == 1
+    assert engine.runs[0].closed is True
+    assert engine.closed_runs == 1
+    runtime.close()
+
+
+def test_prepared_voice_is_reusable_across_independent_runs():
+    engine = SegmentEngine(
+        [
+            {"audio": np.array([0.1], dtype=np.float32)},
+            {"audio": np.array([0.2], dtype=np.float32)},
+        ]
+    )
+    runtime = SoproRuntime(engine)
+    voice = _voice(runtime)
+    for request_id in ("first", "second"):
+        runtime.synthesize(
+            SynthesisRequest(request_id, "Hello."),
+            voice=voice,
+            output=SoproOutputConfig(mode="raw"),
+        )
+    assert len(engine.runs) == 2
+    assert engine.runs[0] is not engine.runs[1]
+    assert all(run.state is voice.state and run.closed for run in engine.runs)
     runtime.close()
 
 

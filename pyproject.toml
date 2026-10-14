@@ -13,7 +13,7 @@ dependencies = ["numpy>=1.23", "audiosig>=0.1.8,<0.2"]
 keywords = ["sopro", "tts", "onnx", "onnxvoice"]
 
 [project.optional-dependencies]
-cpu = ["onnxvoice[cpu]>=0.2.6,<0.3"]
+cpu = ["onnxvoice[cpu]>=0.2.7,<0.3"]
 dev = ["pytest>=8", "build>=1.2", "ruff>=0.8", "setuptools_scm>=8", "twine>=5"]
 
 [project.scripts]
