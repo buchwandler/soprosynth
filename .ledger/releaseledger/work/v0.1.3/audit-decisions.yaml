@@ -1,0 +1,28 @@
+rows:
+  - sha: 477fd08cdf02d183cbea92d94fe2773bba8eaaed
+    inspected: true
+    inspected_paths:
+      - README.md
+      - docs/changelog.md
+      - soprosynth/api.py
+      - soprosynth/api_contract.py
+      - soprosynth/postprocess.py
+      - soprosynth/types.py
+      - tests/test_api.py
+      - tests/test_postprocess.py
+      - tests/test_sopro_orchestration.py
+      - tests/test_streaming.py
+      - tests/test_types.py
+      - tests/wheel_api_smoke.py
+    observed_behavior: >-
+      Request measurement now permits an explicit fit result without a finite
+      public maximum, validates the exact request's bounded segmentation, and
+      reports token units. Word packing now hard-splits overlong unbroken words
+      so every generated segment respects max_segment_chars; documentation and
+      regression coverage were added.
+    public_impact: public
+    decision: accepted
+    target_entry_key: null
+    target_entry_id: null
+    notes: ""
+    stale: false

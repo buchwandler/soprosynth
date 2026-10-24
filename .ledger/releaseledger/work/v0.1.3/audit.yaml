@@ -1,0 +1,40 @@
+schema_version: 1
+object_type: commit_audit_sheet
+versioning:
+  schema_version: 1
+  revision: 1
+release_version: v0.1.3
+git_base_ref: v0.1.2
+git_base_sha: a38646ed4f66fd1041c9c62b844c4172e56547a9
+git_head_ref: HEAD
+git_head_sha: 477fd08cdf02d183cbea92d94fe2773bba8eaaed
+git_range: a38646ed4f66fd1041c9c62b844c4172e56547a9..477fd08cdf02d183cbea92d94fe2773bba8eaaed
+commit_count: 1
+rows:
+  - sha: 477fd08cdf02d183cbea92d94fe2773bba8eaaed
+    source_ref: git:477fd08cdf02d183cbea92d94fe2773bba8eaaed
+    short_sha: 477fd08
+    changed_paths:
+      - README.md
+      - docs/changelog.md
+      - soprosynth/api.py
+      - soprosynth/api_contract.py
+      - soprosynth/postprocess.py
+      - soprosynth/types.py
+      - tests/test_api.py
+      - tests/test_postprocess.py
+      - tests/test_sopro_orchestration.py
+      - tests/test_streaming.py
+      - tests/test_types.py
+      - tests/wheel_api_smoke.py
+    stats:
+      files_changed: 12
+      insertions: 191
+      deletions: 39
+    inspected: false
+    inspected_paths: []
+    observed_behavior: ""
+    public_impact: unknown
+    decision: needs_review
+    stale: false
+    evidence_subject: "feat: add api"

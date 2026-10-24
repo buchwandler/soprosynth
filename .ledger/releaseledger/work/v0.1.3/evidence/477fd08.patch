@@ -1,0 +1,424 @@
+ README.md                         |  2 +-
+ docs/changelog.md                 |  6 ++++
+ soprosynth/api.py                 | 61 +++++++++++++++++++++++----------------
+ soprosynth/api_contract.py        |  2 ++
+ soprosynth/postprocess.py         | 26 ++++++++++++++++-
+ soprosynth/types.py               | 10 +++++--
+ tests/test_api.py                 | 26 +++++++++++++++++
+ tests/test_postprocess.py         | 11 ++++++-
+ tests/test_sopro_orchestration.py | 36 +++++++++++++++++++++++
+ tests/test_streaming.py           | 13 +++++----
+ tests/test_types.py               | 14 +++++++--
+ tests/wheel_api_smoke.py          | 23 +++++++++++++++
+ 12 files changed, 191 insertions(+), 39 deletions(-)
+
+diff --git a/README.md b/README.md
+index 5c2fdda..9855ffa 100644
+--- a/README.md
++++ b/README.md
+@@ -83,7 +83,7 @@ with SoproRuntime.from_pretrained(
+
+ `SynthesisRequest` requires a stable ID and non-empty text. SoproSynth applies upstream-compatible character/sentence segmentation; ONNXVoice's `SoproRun` owns semantic-token carry between segments. Requests use one ONNXVoice run, which is closed on success, failure, or early streaming cancellation.
+
+-`runtime.prepare_voice(...)` forwards clean mono float32 reference samples at their original sample rate by default; ONNXVoice owns Sopro reference preprocessing. Explicit `resampler="linear"` or `resampler="audiosig"` selects a legacy SoproSynth-side conversion override. Reuse a `PreparedVoice` only with its creating runtime; its state is not portable across runtimes, model revisions, or processes. `runtime.measure_request(request)` uses ONNXVoice text preparation to report the token count.
++`runtime.prepare_voice(...)` forwards clean mono float32 reference samples at their original sample rate by default; ONNXVoice owns Sopro reference preprocessing. Explicit `resampler="linear"` or `resampler="audiosig"` selects a legacy SoproSynth-side conversion override. Reuse a `PreparedVoice` only with its creating runtime; its state is not portable across runtimes, model revisions, or processes. `runtime.measure_request(request)` uses ONNXVoice text preparation to report the exact model-token count and authoritative `fits` result for the exact public request. With no external maximum, a request the runtime can execute under its automatic boundary policy returns `fits=True` even when `maximum=None`; the missing finite maximum does not mean fit is unknown. The optional `maximum` is a caller-supplied token limit. `max_segment_chars` controls internal character segmentation and is not a model-token maximum.
+
+ `request_api_contract().supports_streaming` and `runtime.capabilities.supports_streaming` are both `False` until the opt-in released-wheel real-model integration gate passes. The synchronous `stream()` and `stream_text()` APIs are implemented, but streaming is not yet advertised as a supported capability. The request contract reports automatic text boundaries (`caller_owns_text_boundaries=False`) and support for the native/raw output policy.
+
+diff --git a/docs/changelog.md b/docs/changelog.md
+index 5c6a45e..c8761d9 100644
+--- a/docs/changelog.md
++++ b/docs/changelog.md
+@@ -1,5 +1,11 @@
+ # Changelog
+
++## [Unreleased]
++
++### Fixed
++
++- Fixed Sopro request measurement so an exact request can report an authoritative fit result without requiring a finite public token maximum. SoproSynth owns internal text segmentation, so accepted requests now return `fits=True, maximum=None` when appropriate instead of leaving fit unknown. `max_segment_chars` remains an internal character-boundary control and is not exposed as a token maximum.
++
+ ## [v0.1.2] - 2026-10-24
+
+ ### Added
+diff --git a/soprosynth/api.py b/soprosynth/api.py
+index 8fe11d9..46cbbea 100644
+--- a/soprosynth/api.py
++++ b/soprosynth/api.py
+@@ -319,6 +319,30 @@ class SoproRuntime:
+         if request.pronunciation_overrides:
+             raise UnsupportedFeatureError("pronunciation_overrides")
+
++    def _effective_max_segment_chars(self, config: GenerationConfig | None = None) -> int:
++        max_segment_chars = config.text_chunk_size if config is not None else None
++        if max_segment_chars is None:
++            max_segment_chars = getattr(
++                self._engine, "max_segment_chars", DEFAULT_MAX_SEGMENT_CHARS
++            )
++        if max_segment_chars is None:
++            max_segment_chars = DEFAULT_MAX_SEGMENT_CHARS
++        if type(max_segment_chars) is not int or max_segment_chars < 1:
++            raise RuntimeCapabilityError("ONNXVoice must expose a positive Sopro max_segment_chars")
++        return max_segment_chars
++
++    def _split_request_text(self, text: str, max_segment_chars: int) -> tuple[str, ...]:
++        if type(max_segment_chars) is not int or max_segment_chars < 1:
++            raise RuntimeCapabilityError("ONNXVoice must expose a positive Sopro max_segment_chars")
++        segments = split_text(text, max_segment_chars)
++        if not segments:
++            raise EmptyTextError("text must not be empty or whitespace-only")
++        if any(not segment or len(segment) > max_segment_chars for segment in segments):
++            raise RuntimeCapabilityError(
++                "Sopro text segmentation did not respect max_segment_chars"
++            )
++        return segments
++
+     def measure_request(
+         self,
+         request: SynthesisRequest,
+@@ -336,7 +360,14 @@ class SoproRuntime:
+             raise
+         except Exception as exc:
+             raise ModelInferenceError("Sopro request token measurement failed") from exc
+-        return RequestMeasure(amount=amount, maximum=maximum)
++        max_segment_chars = self._effective_max_segment_chars()
++        self._split_request_text(request.text, max_segment_chars)
++        return RequestMeasure(
++            amount=amount,
++            maximum=maximum,
++            unit="tokens",
++            fits=amount <= maximum if maximum is not None else True,
++        )
+
+     def synthesize(
+         self,
+@@ -366,18 +397,8 @@ class SoproRuntime:
+             if selected_config.steps != fixed_steps:
+                 raise RuntimeCapabilityError(f"Sopro acoustic steps are fixed at {fixed_steps}")
+
+-        max_segment_chars = selected_config.text_chunk_size
+-        if max_segment_chars is None:
+-            max_segment_chars = getattr(
+-                self._engine, "max_segment_chars", DEFAULT_MAX_SEGMENT_CHARS
+-            )
+-        if max_segment_chars is None:
+-            max_segment_chars = DEFAULT_MAX_SEGMENT_CHARS
+-        if type(max_segment_chars) is not int or max_segment_chars < 1:
+-            raise RuntimeCapabilityError("ONNXVoice must expose a positive Sopro max_segment_chars")
+-        text_segments = split_text(request.text, max_segment_chars)
+-        if not text_segments:
+-            raise EmptyTextError("text must not be empty or whitespace-only")
++        max_segment_chars = self._effective_max_segment_chars(selected_config)
++        text_segments = self._split_request_text(request.text, max_segment_chars)
+
+         raw_reference_level = voice.metadata.get("reference_level_db")
+         reference_level_db: float | None = None
+@@ -535,18 +556,8 @@ class SoproRuntime:
+                 raise RuntimeCapabilityError("ONNXVoice must expose a positive fixed_steps value")
+             if selected_config.steps != fixed_steps:
+                 raise RuntimeCapabilityError(f"Sopro acoustic steps are fixed at {fixed_steps}")
+-        max_segment_chars = selected_config.text_chunk_size
+-        if max_segment_chars is None:
+-            max_segment_chars = getattr(
+-                self._engine, "max_segment_chars", DEFAULT_MAX_SEGMENT_CHARS
+-            )
+-        if max_segment_chars is None:
+-            max_segment_chars = DEFAULT_MAX_SEGMENT_CHARS
+-        if type(max_segment_chars) is not int or max_segment_chars < 1:
+-            raise RuntimeCapabilityError("ONNXVoice must expose a positive Sopro max_segment_chars")
+-        text_segments = split_text(request.text, max_segment_chars)
+-        if not text_segments:
+-            raise EmptyTextError("text must not be empty or whitespace-only")
++        max_segment_chars = self._effective_max_segment_chars(selected_config)
++        text_segments = self._split_request_text(request.text, max_segment_chars)
+
+         raw_reference_level = voice.metadata.get("reference_level_db")
+         reference_level_db: float | None = None
+diff --git a/soprosynth/api_contract.py b/soprosynth/api_contract.py
+index ce61966..1be9a1c 100644
+--- a/soprosynth/api_contract.py
++++ b/soprosynth/api_contract.py
+@@ -61,6 +61,8 @@ def request_api_contract() -> RequestApiContract:
+         supports_word_timings=False,
+         supports_voice_level=True,
+         supports_sopro_output_policy=True,
++        # Successful measurement reports authoritative fit for the exact request,
++        # even without a finite public maximum.
+         supports_request_measurement=True,
+         # Streaming methods are implemented; advertise only after the released-wheel gate passes.
+         supports_streaming=False,
+diff --git a/soprosynth/postprocess.py b/soprosynth/postprocess.py
+index f7007d4..1f0a97d 100644
+--- a/soprosynth/postprocess.py
++++ b/soprosynth/postprocess.py
+@@ -43,6 +43,30 @@ def _pack(parts: Sequence[str], max_chars: int) -> list[str]:
+     return packed
+
+
++def _pack_words(parts: Sequence[str], max_chars: int) -> list[str]:
++    """Pack words while splitting any single overlong component at hard limits."""
++    packed: list[str] = []
++    current = ""
++    for part in parts:
++        if len(part) > max_chars:
++            if current:
++                packed.append(current)
++                current = ""
++            packed.extend(
++                part[start : start + max_chars] for start in range(0, len(part), max_chars)
++            )
++        elif not current:
++            current = part
++        elif len(current) + 1 + len(part) <= max_chars:
++            current = f"{current} {part}"
++        else:
++            packed.append(current)
++            current = part
++    if current:
++        packed.append(current)
++    return packed
++
++
+ def split_text(text: str, max_segment_chars: int = DEFAULT_MAX_SEGMENT_CHARS) -> tuple[str, ...]:
+     """Split text like Sopro's offline ``split_text`` without a native dependency."""
+     if not isinstance(text, str):
+@@ -63,7 +87,7 @@ def split_text(text: str, max_segment_chars: int = DEFAULT_MAX_SEGMENT_CHARS) ->
+             if len(clause) <= max_segment_chars:
+                 segments.append(clause)
+             else:
+-                segments.extend(_pack(clause.split(" "), max_segment_chars))
++                segments.extend(_pack_words(clause.split(" "), max_segment_chars))
+     return tuple(segments)
+
+
+diff --git a/soprosynth/types.py b/soprosynth/types.py
+index 2a2b9b8..648de63 100644
+--- a/soprosynth/types.py
++++ b/soprosynth/types.py
+@@ -246,10 +246,14 @@ class RequestMeasure:
+             raise InvalidRequestError("measure maximum must be a non-negative integer or None")
+         if not isinstance(self.unit, str) or not self.unit:
+             raise InvalidRequestError("measure unit must be a non-empty string")
+-        expected = None if self.maximum is None else self.amount <= self.maximum
+-        if self.fits is not None and self.fits is not expected:
++        if self.fits is not None and type(self.fits) is not bool:
++            raise InvalidRequestError("measure fits must be bool or None")
++
++        derived = None if self.maximum is None else self.amount <= self.maximum
++        if self.fits is not None and derived is not None and self.fits is not derived:
+             raise InvalidRequestError("measure fits value is inconsistent with amount and maximum")
+-        object.__setattr__(self, "fits", expected)
++        if self.fits is None and derived is not None:
++            object.__setattr__(self, "fits", derived)
+
+
+ @dataclass(frozen=True, slots=True)
+diff --git a/tests/test_api.py b/tests/test_api.py
+index 0629dbe..43a2084 100644
+--- a/tests/test_api.py
++++ b/tests/test_api.py
+@@ -260,3 +260,29 @@ def test_prepared_voice_remains_runtime_bound():
+         second.synthesize(SynthesisRequest("request-1", "hello", language="de"), voice=voice)
+     first.close()
+     second.close()
++
++
++def test_measure_request_reports_authoritative_fit_without_runtime_side_effects():
++    engine = FakeEngine()
++    runtime = SoproRuntime(engine)
++    request = SynthesisRequest("measure", "hello")
++
++    measured = runtime.measure_request(request)
++    assert measured.amount == 2
++    assert measured.maximum is None
++    assert measured.fits is True
++    assert measured.unit == "tokens"
++    assert engine.measured == [("hello", None)]
++    assert engine.prepared == []
++    assert engine.run_args is None
++    assert engine.run_closed is False
++
++    rejected = runtime.measure_request(request, maximum=1)
++    assert rejected.amount == 2
++    assert rejected.maximum == 1
++    assert rejected.fits is False
++    assert rejected.unit == "tokens"
++    assert engine.measured == [("hello", None), ("hello", None)]
++    assert engine.prepared == []
++    assert engine.run_args is None
++    runtime.close()
+diff --git a/tests/test_postprocess.py b/tests/test_postprocess.py
+index 15c8013..070cd58 100644
+--- a/tests/test_postprocess.py
++++ b/tests/test_postprocess.py
+@@ -16,7 +16,16 @@ def test_split_text_matches_upstream_sentence_clause_and_word_packing():
+     )
+     assert split_text("one, two, three, four", 9) == ("one, two,", "three,", "four")
+     assert split_text("  First.\n  Second. ", 50) == ("First. Second.",)
+-    assert split_text("one two extraordinarilylongword", 5)[-1] == "extraordinarilylongword"
++    segments = split_text("one two extraordinarilylongword", 5)
++    assert "".join(segments[-5:]) == "extraordinarilylongword"
++    assert all(len(segment) <= 5 for segment in segments)
++
++
++def test_split_text_hard_chunks_overlong_unbroken_components():
++    text = "x" * 11
++    segments = split_text(text, 5)
++    assert segments == ("xxxxx", "xxxxx", "x")
++    assert "".join(segments) == text
+
+
+ def test_output_config_defaults_native_and_rejects_unknown_modes():
+diff --git a/tests/test_sopro_orchestration.py b/tests/test_sopro_orchestration.py
+index cdb305c..eced382 100644
+--- a/tests/test_sopro_orchestration.py
++++ b/tests/test_sopro_orchestration.py
+@@ -67,6 +67,11 @@ class SegmentEngine:
+         self.runs = []
+         self.closed_runs = 0
+         self.fail_on_segment = None
++        self.measured = []
++
++    def measure_text(self, text, *, language=None):
++        self.measured.append((text, language))
++        return 13
+
+     def prepare_reference(self, reference, *, seconds=None):
+         self.reference_seconds.append(seconds)
+@@ -252,3 +257,34 @@ def test_native_mode_requires_reference_level_before_inference():
+     )
+     assert raw_result.audio.tolist() == pytest.approx([0.1])
+     runtime.close()
++
++
++def test_long_prose_measures_as_fitting_and_synthesizes_multiple_bounded_segments():
++    from soprosynth.postprocess import split_text
++
++    text = ("This is a normal sentence with several words. " * 3).strip()
++    engine = SegmentEngine(
++        [{"audio": np.array([0.1], dtype=np.float32)} for _ in split_text(text, 6)]
++    )
++    runtime = SoproRuntime(engine)
++    request = SynthesisRequest("long-prose", text)
++
++    measured = runtime.measure_request(request)
++    assert len(text) > engine.max_segment_chars
++    assert measured.amount == 13
++    assert measured.maximum is None
++    assert measured.fits is True
++    assert measured.unit == "tokens"
++    assert engine.measured == [(text, None)]
++    assert engine.runs == []
++    assert engine.calls == []
++    assert engine.closed_runs == 0
++    assert engine.reference_seconds == []
++
++    voice = _voice(runtime)
++    runtime.synthesize(request, voice=voice, output=SoproOutputConfig(mode="raw"))
++    segments = engine.runs[0].segment_calls
++    assert len(segments) > 1
++    assert all(len(segment) <= engine.max_segment_chars for segment in segments)
++    assert engine.closed_runs == 1
++    runtime.close()
+diff --git a/tests/test_streaming.py b/tests/test_streaming.py
+index 27774db..6800962 100644
+--- a/tests/test_streaming.py
++++ b/tests/test_streaming.py
+@@ -99,6 +99,7 @@ def test_stream_text_emits_monotonic_chunks_and_one_final_chunk_across_segments(
+                 _chunk(np.array([-0.3], dtype=np.float32), final=True),
+             ],
+             [_chunk(np.array([0.4], dtype=np.float32), final=True)],
++            [_chunk(np.array([0.5], dtype=np.float32), final=True)],
+         ]
+     )
+     runtime = SoproRuntime(engine)
+@@ -113,21 +114,21 @@ def test_stream_text_emits_monotonic_chunks_and_one_final_chunk_across_segments(
+     )
+
+     assert all(isinstance(chunk, SynthesisChunk) for chunk in chunks)
+-    assert [chunk.index for chunk in chunks] == list(range(4))
+-    assert [chunk.segment_index for chunk in chunks] == [0, 0, 1, 1]
+-    assert [chunk.is_final for chunk in chunks] == [False, False, False, True]
++    assert [chunk.index for chunk in chunks] == list(range(5))
++    assert [chunk.segment_index for chunk in chunks] == [0, 0, 1, 1, 2]
++    assert [chunk.is_final for chunk in chunks] == [False, False, False, False, True]
+     assert sum(chunk.is_final for chunk in chunks) == 1
+     assert all(chunk.sample_rate == 1_000 for chunk in chunks)
+     assert all(
+         chunk.audio.dtype == np.float32 and chunk.audio.flags.c_contiguous for chunk in chunks
+     )
+-    assert [call[0] for call in engine.runs[0].segment_calls] == ["First.", "Second."]
++    assert [call[0] for call in engine.runs[0].segment_calls] == ["First.", "Second", "."]
+     assert engine.runs[0].closed
+     summary = chunks[-1].metadata
+     assert summary["stream_final"] is True
+     assert summary["chunk_count"] == len(chunks)
+-    assert summary["segment_count"] == 2
+-    assert summary["audio_samples_total"] == 6
++    assert summary["segment_count"] == 3
++    assert summary["audio_samples_total"] == 7
+     assert summary["first_chunk_ms"] >= 0
+     assert summary["total_stream_ms"] >= summary["first_chunk_ms"]
+
+diff --git a/tests/test_types.py b/tests/test_types.py
+index 9c0719c..e961f11 100644
+--- a/tests/test_types.py
++++ b/tests/test_types.py
+@@ -80,14 +80,24 @@ def test_prepared_voice_identity_excludes_reference_audio():
+     assert "audio" not in voice.identity
+
+
+-def test_measure_fits_is_derived():
+-    assert RequestMeasure(4, None).fits is None
++def test_measure_fits_can_be_explicit_without_maximum():
++    assert RequestMeasure(amount=13, maximum=None, fits=True).fits is True
++    assert RequestMeasure(amount=13, maximum=None, fits=False).fits is False
++    assert RequestMeasure(amount=13, maximum=None).fits is None
++
++
++def test_measure_fits_is_derived_and_validated_for_finite_maximum():
+     assert RequestMeasure(4, 4).fits is True
+     assert RequestMeasure(5, 4).fits is False
+     with pytest.raises(InvalidRequestError):
+         RequestMeasure(5, 4, fits=True)
+
+
++def test_measure_fits_must_be_bool_or_none():
++    with pytest.raises(InvalidRequestError):
++        RequestMeasure(amount=13, maximum=None, fits=1)  # type: ignore[arg-type]
++
++
+ def test_discovery_metadata_is_copy_protected():
+     metadata = {"nested": {"profiles": ["p"]}}
+     bundle = DiscoveredBundle("id", "sopro:id", "Model", metadata=metadata)
+diff --git a/tests/wheel_api_smoke.py b/tests/wheel_api_smoke.py
+index 6fbad5a..296f90b 100644
+--- a/tests/wheel_api_smoke.py
++++ b/tests/wheel_api_smoke.py
+@@ -58,3 +58,26 @@ checkout = Path(__file__).resolve().parents[1]
+ installed_package = Path(soprosynth.__file__).resolve()
+ assert checkout not in installed_package.parents, (checkout, installed_package)
+ assert not ({"sopro", "onnxvoice", "onnxruntime", "torch"} & sys.modules.keys())
++
++
++class MeasurementEngine:
++    max_segment_chars = 10
++
++    def __init__(self):
++        self.measured = []
++
++    def measure_text(self, text, *, language=None):
++        self.measured.append((text, language))
++        return 13
++
++
++engine = MeasurementEngine()
++runtime = soprosynth.SoproRuntime(engine)
++request = soprosynth.SynthesisRequest("wheel-measure", "This is longer than ten.")
++measured = runtime.measure_request(request)
++assert measured.amount == 13
++assert measured.maximum is None
++assert measured.unit == "tokens"
++assert measured.fits is True
++assert engine.measured == [(request.text, None)]
++runtime.close()
