@@ -43,6 +43,30 @@ def _pack(parts: Sequence[str], max_chars: int) -> list[str]:
     return packed
 
 
+def _pack_words(parts: Sequence[str], max_chars: int) -> list[str]:
+    """Pack words while splitting any single overlong component at hard limits."""
+    packed: list[str] = []
+    current = ""
+    for part in parts:
+        if len(part) > max_chars:
+            if current:
+                packed.append(current)
+                current = ""
+            packed.extend(
+                part[start : start + max_chars] for start in range(0, len(part), max_chars)
+            )
+        elif not current:
+            current = part
+        elif len(current) + 1 + len(part) <= max_chars:
+            current = f"{current} {part}"
+        else:
+            packed.append(current)
+            current = part
+    if current:
+        packed.append(current)
+    return packed
+
+
 def split_text(text: str, max_segment_chars: int = DEFAULT_MAX_SEGMENT_CHARS) -> tuple[str, ...]:
     """Split text like Sopro's offline ``split_text`` without a native dependency."""
     if not isinstance(text, str):
@@ -63,7 +87,7 @@ def split_text(text: str, max_segment_chars: int = DEFAULT_MAX_SEGMENT_CHARS) ->
             if len(clause) <= max_segment_chars:
                 segments.append(clause)
             else:
-                segments.extend(_pack(clause.split(" "), max_segment_chars))
+                segments.extend(_pack_words(clause.split(" "), max_segment_chars))
     return tuple(segments)
 
 

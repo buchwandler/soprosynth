@@ -16,7 +16,16 @@ def test_split_text_matches_upstream_sentence_clause_and_word_packing():
     )
     assert split_text("one, two, three, four", 9) == ("one, two,", "three,", "four")
     assert split_text("  First.\n  Second. ", 50) == ("First. Second.",)
-    assert split_text("one two extraordinarilylongword", 5)[-1] == "extraordinarilylongword"
+    segments = split_text("one two extraordinarilylongword", 5)
+    assert "".join(segments[-5:]) == "extraordinarilylongword"
+    assert all(len(segment) <= 5 for segment in segments)
+
+
+def test_split_text_hard_chunks_overlong_unbroken_components():
+    text = "x" * 11
+    segments = split_text(text, 5)
+    assert segments == ("xxxxx", "xxxxx", "x")
+    assert "".join(segments) == text
 
 
 def test_output_config_defaults_native_and_rejects_unknown_modes():

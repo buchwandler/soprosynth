@@ -99,6 +99,7 @@ def test_stream_text_emits_monotonic_chunks_and_one_final_chunk_across_segments(
                 _chunk(np.array([-0.3], dtype=np.float32), final=True),
             ],
             [_chunk(np.array([0.4], dtype=np.float32), final=True)],
+            [_chunk(np.array([0.5], dtype=np.float32), final=True)],
         ]
     )
     runtime = SoproRuntime(engine)
@@ -113,21 +114,21 @@ def test_stream_text_emits_monotonic_chunks_and_one_final_chunk_across_segments(
     )
 
     assert all(isinstance(chunk, SynthesisChunk) for chunk in chunks)
-    assert [chunk.index for chunk in chunks] == list(range(4))
-    assert [chunk.segment_index for chunk in chunks] == [0, 0, 1, 1]
-    assert [chunk.is_final for chunk in chunks] == [False, False, False, True]
+    assert [chunk.index for chunk in chunks] == list(range(5))
+    assert [chunk.segment_index for chunk in chunks] == [0, 0, 1, 1, 2]
+    assert [chunk.is_final for chunk in chunks] == [False, False, False, False, True]
     assert sum(chunk.is_final for chunk in chunks) == 1
     assert all(chunk.sample_rate == 1_000 for chunk in chunks)
     assert all(
         chunk.audio.dtype == np.float32 and chunk.audio.flags.c_contiguous for chunk in chunks
     )
-    assert [call[0] for call in engine.runs[0].segment_calls] == ["First.", "Second."]
+    assert [call[0] for call in engine.runs[0].segment_calls] == ["First.", "Second", "."]
     assert engine.runs[0].closed
     summary = chunks[-1].metadata
     assert summary["stream_final"] is True
     assert summary["chunk_count"] == len(chunks)
-    assert summary["segment_count"] == 2
-    assert summary["audio_samples_total"] == 6
+    assert summary["segment_count"] == 3
+    assert summary["audio_samples_total"] == 7
     assert summary["first_chunk_ms"] >= 0
     assert summary["total_stream_ms"] >= summary["first_chunk_ms"]
 

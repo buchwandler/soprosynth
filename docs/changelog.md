@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Fixed Sopro request measurement so an exact request can report an authoritative fit result without requiring a finite public token maximum. SoproSynth owns internal text segmentation, so accepted requests now return `fits=True, maximum=None` when appropriate instead of leaving fit unknown. `max_segment_chars` remains an internal character-boundary control and is not exposed as a token maximum.
+
 ## [v0.1.2] - 2026-10-24
 
 ### Added

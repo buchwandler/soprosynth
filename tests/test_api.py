@@ -260,3 +260,29 @@ def test_prepared_voice_remains_runtime_bound():
         second.synthesize(SynthesisRequest("request-1", "hello", language="de"), voice=voice)
     first.close()
     second.close()
+
+
+def test_measure_request_reports_authoritative_fit_without_runtime_side_effects():
+    engine = FakeEngine()
+    runtime = SoproRuntime(engine)
+    request = SynthesisRequest("measure", "hello")
+
+    measured = runtime.measure_request(request)
+    assert measured.amount == 2
+    assert measured.maximum is None
+    assert measured.fits is True
+    assert measured.unit == "tokens"
+    assert engine.measured == [("hello", None)]
+    assert engine.prepared == []
+    assert engine.run_args is None
+    assert engine.run_closed is False
+
+    rejected = runtime.measure_request(request, maximum=1)
+    assert rejected.amount == 2
+    assert rejected.maximum == 1
+    assert rejected.fits is False
+    assert rejected.unit == "tokens"
+    assert engine.measured == [("hello", None), ("hello", None)]
+    assert engine.prepared == []
+    assert engine.run_args is None
+    runtime.close()

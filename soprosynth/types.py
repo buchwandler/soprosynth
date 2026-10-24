@@ -246,10 +246,14 @@ class RequestMeasure:
             raise InvalidRequestError("measure maximum must be a non-negative integer or None")
         if not isinstance(self.unit, str) or not self.unit:
             raise InvalidRequestError("measure unit must be a non-empty string")
-        expected = None if self.maximum is None else self.amount <= self.maximum
-        if self.fits is not None and self.fits is not expected:
+        if self.fits is not None and type(self.fits) is not bool:
+            raise InvalidRequestError("measure fits must be bool or None")
+
+        derived = None if self.maximum is None else self.amount <= self.maximum
+        if self.fits is not None and derived is not None and self.fits is not derived:
             raise InvalidRequestError("measure fits value is inconsistent with amount and maximum")
-        object.__setattr__(self, "fits", expected)
+        if self.fits is None and derived is not None:
+            object.__setattr__(self, "fits", derived)
 
 
 @dataclass(frozen=True, slots=True)

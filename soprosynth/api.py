@@ -319,6 +319,30 @@ class SoproRuntime:
         if request.pronunciation_overrides:
             raise UnsupportedFeatureError("pronunciation_overrides")
 
+    def _effective_max_segment_chars(self, config: GenerationConfig | None = None) -> int:
+        max_segment_chars = config.text_chunk_size if config is not None else None
+        if max_segment_chars is None:
+            max_segment_chars = getattr(
+                self._engine, "max_segment_chars", DEFAULT_MAX_SEGMENT_CHARS
+            )
+        if max_segment_chars is None:
+            max_segment_chars = DEFAULT_MAX_SEGMENT_CHARS
+        if type(max_segment_chars) is not int or max_segment_chars < 1:
+            raise RuntimeCapabilityError("ONNXVoice must expose a positive Sopro max_segment_chars")
+        return max_segment_chars
+
+    def _split_request_text(self, text: str, max_segment_chars: int) -> tuple[str, ...]:
+        if type(max_segment_chars) is not int or max_segment_chars < 1:
+            raise RuntimeCapabilityError("ONNXVoice must expose a positive Sopro max_segment_chars")
+        segments = split_text(text, max_segment_chars)
+        if not segments:
+            raise EmptyTextError("text must not be empty or whitespace-only")
+        if any(not segment or len(segment) > max_segment_chars for segment in segments):
+            raise RuntimeCapabilityError(
+                "Sopro text segmentation did not respect max_segment_chars"
+            )
+        return segments
+
     def measure_request(
         self,
         request: SynthesisRequest,
@@ -336,7 +360,14 @@ class SoproRuntime:
             raise
         except Exception as exc:
             raise ModelInferenceError("Sopro request token measurement failed") from exc
-        return RequestMeasure(amount=amount, maximum=maximum)
+        max_segment_chars = self._effective_max_segment_chars()
+        self._split_request_text(request.text, max_segment_chars)
+        return RequestMeasure(
+            amount=amount,
+            maximum=maximum,
+            unit="tokens",
+            fits=amount <= maximum if maximum is not None else True,
+        )
 
     def synthesize(
         self,
@@ -366,18 +397,8 @@ class SoproRuntime:
             if selected_config.steps != fixed_steps:
                 raise RuntimeCapabilityError(f"Sopro acoustic steps are fixed at {fixed_steps}")
 
-        max_segment_chars = selected_config.text_chunk_size
-        if max_segment_chars is None:
-            max_segment_chars = getattr(
-                self._engine, "max_segment_chars", DEFAULT_MAX_SEGMENT_CHARS
-            )
-        if max_segment_chars is None:
-            max_segment_chars = DEFAULT_MAX_SEGMENT_CHARS
-        if type(max_segment_chars) is not int or max_segment_chars < 1:
-            raise RuntimeCapabilityError("ONNXVoice must expose a positive Sopro max_segment_chars")
-        text_segments = split_text(request.text, max_segment_chars)
-        if not text_segments:
-            raise EmptyTextError("text must not be empty or whitespace-only")
+        max_segment_chars = self._effective_max_segment_chars(selected_config)
+        text_segments = self._split_request_text(request.text, max_segment_chars)
 
         raw_reference_level = voice.metadata.get("reference_level_db")
         reference_level_db: float | None = None
@@ -535,18 +556,8 @@ class SoproRuntime:
                 raise RuntimeCapabilityError("ONNXVoice must expose a positive fixed_steps value")
             if selected_config.steps != fixed_steps:
                 raise RuntimeCapabilityError(f"Sopro acoustic steps are fixed at {fixed_steps}")
-        max_segment_chars = selected_config.text_chunk_size
-        if max_segment_chars is None:
-            max_segment_chars = getattr(
-                self._engine, "max_segment_chars", DEFAULT_MAX_SEGMENT_CHARS
-            )
-        if max_segment_chars is None:
-            max_segment_chars = DEFAULT_MAX_SEGMENT_CHARS
-        if type(max_segment_chars) is not int or max_segment_chars < 1:
-            raise RuntimeCapabilityError("ONNXVoice must expose a positive Sopro max_segment_chars")
-        text_segments = split_text(request.text, max_segment_chars)
-        if not text_segments:
-            raise EmptyTextError("text must not be empty or whitespace-only")
+        max_segment_chars = self._effective_max_segment_chars(selected_config)
+        text_segments = self._split_request_text(request.text, max_segment_chars)
 
         raw_reference_level = voice.metadata.get("reference_level_db")
         reference_level_db: float | None = None

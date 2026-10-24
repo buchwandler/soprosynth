@@ -67,6 +67,11 @@ class SegmentEngine:
         self.runs = []
         self.closed_runs = 0
         self.fail_on_segment = None
+        self.measured = []
+
+    def measure_text(self, text, *, language=None):
+        self.measured.append((text, language))
+        return 13
 
     def prepare_reference(self, reference, *, seconds=None):
         self.reference_seconds.append(seconds)
@@ -251,4 +256,35 @@ def test_native_mode_requires_reference_level_before_inference():
         output=SoproOutputConfig(mode="raw"),
     )
     assert raw_result.audio.tolist() == pytest.approx([0.1])
+    runtime.close()
+
+
+def test_long_prose_measures_as_fitting_and_synthesizes_multiple_bounded_segments():
+    from soprosynth.postprocess import split_text
+
+    text = ("This is a normal sentence with several words. " * 3).strip()
+    engine = SegmentEngine(
+        [{"audio": np.array([0.1], dtype=np.float32)} for _ in split_text(text, 6)]
+    )
+    runtime = SoproRuntime(engine)
+    request = SynthesisRequest("long-prose", text)
+
+    measured = runtime.measure_request(request)
+    assert len(text) > engine.max_segment_chars
+    assert measured.amount == 13
+    assert measured.maximum is None
+    assert measured.fits is True
+    assert measured.unit == "tokens"
+    assert engine.measured == [(text, None)]
+    assert engine.runs == []
+    assert engine.calls == []
+    assert engine.closed_runs == 0
+    assert engine.reference_seconds == []
+
+    voice = _voice(runtime)
+    runtime.synthesize(request, voice=voice, output=SoproOutputConfig(mode="raw"))
+    segments = engine.runs[0].segment_calls
+    assert len(segments) > 1
+    assert all(len(segment) <= engine.max_segment_chars for segment in segments)
+    assert engine.closed_runs == 1
     runtime.close()

@@ -58,3 +58,26 @@ checkout = Path(__file__).resolve().parents[1]
 installed_package = Path(soprosynth.__file__).resolve()
 assert checkout not in installed_package.parents, (checkout, installed_package)
 assert not ({"sopro", "onnxvoice", "onnxruntime", "torch"} & sys.modules.keys())
+
+
+class MeasurementEngine:
+    max_segment_chars = 10
+
+    def __init__(self):
+        self.measured = []
+
+    def measure_text(self, text, *, language=None):
+        self.measured.append((text, language))
+        return 13
+
+
+engine = MeasurementEngine()
+runtime = soprosynth.SoproRuntime(engine)
+request = soprosynth.SynthesisRequest("wheel-measure", "This is longer than ten.")
+measured = runtime.measure_request(request)
+assert measured.amount == 13
+assert measured.maximum is None
+assert measured.unit == "tokens"
+assert measured.fits is True
+assert engine.measured == [(request.text, None)]
+runtime.close()

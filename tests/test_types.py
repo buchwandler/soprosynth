@@ -80,12 +80,22 @@ def test_prepared_voice_identity_excludes_reference_audio():
     assert "audio" not in voice.identity
 
 
-def test_measure_fits_is_derived():
-    assert RequestMeasure(4, None).fits is None
+def test_measure_fits_can_be_explicit_without_maximum():
+    assert RequestMeasure(amount=13, maximum=None, fits=True).fits is True
+    assert RequestMeasure(amount=13, maximum=None, fits=False).fits is False
+    assert RequestMeasure(amount=13, maximum=None).fits is None
+
+
+def test_measure_fits_is_derived_and_validated_for_finite_maximum():
     assert RequestMeasure(4, 4).fits is True
     assert RequestMeasure(5, 4).fits is False
     with pytest.raises(InvalidRequestError):
         RequestMeasure(5, 4, fits=True)
+
+
+def test_measure_fits_must_be_bool_or_none():
+    with pytest.raises(InvalidRequestError):
+        RequestMeasure(amount=13, maximum=None, fits=1)  # type: ignore[arg-type]
 
 
 def test_discovery_metadata_is_copy_protected():
