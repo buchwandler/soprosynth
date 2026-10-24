@@ -29,14 +29,24 @@ def test_discover_prints_onnxvoice_catalog_without_backend_selector(monkeypatch,
         id="v2-turbo",
         ref="sopro:v2-turbo",
         display_name="Sopro v2 Turbo",
-        metadata={"backend": "onnx"},
+        metadata={
+            "catalog": {
+                "profile": {
+                    "providers": ("CPUExecutionProvider",),
+                }
+            }
+        },
     )
     monkeypatch.setattr(cli, "discover_bundles", lambda **kwargs: calls.append(kwargs) or (bundle,))
 
     assert cli.main(["discover", "--offline", "--refresh"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert calls == [{"offline": True, "refresh": True, "cache_dir": None}]
-    assert payload[0]["metadata"]["backend"] == "onnx"
+    assert "catalog" in payload[0]["metadata"]
+    profile = payload[0]["metadata"]["catalog"]["profile"]
+    assert profile["providers"] == ["CPUExecutionProvider"]
+    assert isinstance(payload[0]["metadata"], dict)
+    assert isinstance(profile["providers"], list)
     assert "backend" not in vars(cli._build_parser().parse_args(["discover"]))
 
 

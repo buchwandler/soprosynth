@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -23,6 +24,8 @@ required = (
     "SoproRuntime",
     "discover_bundles",
     "runtime_identity",
+    "to_json_value",
+    "discovered_bundle_to_dict",
 )
 for name in required:
     assert hasattr(soprosynth, name), name
@@ -40,6 +43,16 @@ assert capabilities.backend == "onnx"
 assert capabilities.supports_streaming is False
 assert capabilities.supports_request_measurement is True
 assert soprosynth.runtime_identity()["engine_version"]
+bundle = soprosynth.DiscoveredBundle(
+    id="wheel-smoke",
+    ref="sopro:wheel-smoke",
+    display_name="Wheel smoke",
+    metadata={"catalog": {"profile": {"providers": ("CPUExecutionProvider",)}}},
+)
+bundle_payload = soprosynth.discovered_bundle_to_dict(bundle)
+assert bundle_payload["metadata"]["catalog"]["profile"]["providers"] == ["CPUExecutionProvider"]
+assert soprosynth.to_json_value(bundle) == bundle_payload
+json.dumps(bundle_payload, allow_nan=False)
 
 checkout = Path(__file__).resolve().parents[1]
 installed_package = Path(soprosynth.__file__).resolve()

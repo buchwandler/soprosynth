@@ -150,6 +150,20 @@ Only the portable `wasm-uint8` profile is currently accepted by the Python runti
 
 `discover_bundles()` queries ONNXVoice's `sopro` catalog and does not open a synthesis model. Catalog access requires ONNXVoice, provided by the `cpu` extra. `runtime_identity()` returns SoproSynth/ONNXVoice version information and exact catalog/bundle revisions where available; missing revisions remain unknown rather than being guessed.
 
+## Immutable objects and JSON
+
+Public discovery metadata is intentionally immutable, including nested mappings. Avoid using `dataclasses.asdict()` as a generic transport serializer: immutable mappings such as `MappingProxyType` are not compatible with its deep-copy behavior. Use SoproSynth's supported conversion helpers instead:
+
+```python
+import json
+from soprosynth import discover_bundles, to_json_value
+
+payload = to_json_value(discover_bundles(offline=True))
+print(json.dumps(payload, indent=2, allow_nan=False))
+```
+
+For one discovery result, `discovered_bundle_to_dict(bundle)` returns the same detached JSON-compatible field representation. Mappings become ordinary dictionaries, tuples become lists, and `Path` values become strings. Unsupported values and non-finite floats raise errors rather than being silently stringified.
+
 ## Examples
 
 Runnable scripts and their prerequisites are documented in [`examples/README.md`](examples/README.md):

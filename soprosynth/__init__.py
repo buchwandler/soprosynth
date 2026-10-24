@@ -44,6 +44,7 @@ from .errors import (
     UnsupportedBundleError,
     UnsupportedFeatureError,
 )
+from .serialization import discovered_bundle_to_dict, to_json_value
 from .types import (
     DiscoveredBundle,
     PreparedVoice,
@@ -98,6 +99,8 @@ __all__ = [
     "WordTiming",
     "__version__",
     "discover_bundles",
+    "discovered_bundle_to_dict",
     "request_api_contract",
     "runtime_identity",
+    "to_json_value",
 ]

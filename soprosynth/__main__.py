@@ -4,32 +4,25 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections.abc import Mapping, Sequence
-from dataclasses import fields, is_dataclass
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 from . import __version__, discover_bundles, request_api_contract, runtime_identity
 from .api import SoproRuntime
 from .config import GenerationConfig, SoproOutputConfig, VoiceLevelConfig
-
-
-def _json_value(value: Any) -> Any:
-    if is_dataclass(value) and not isinstance(value, type):
-        return {field.name: _json_value(getattr(value, field.name)) for field in fields(value)}
-    if isinstance(value, Mapping):
-        return {str(key): _json_value(item) for key, item in value.items()}
-    if isinstance(value, (tuple, list)):
-        return [_json_value(item) for item in value]
-    if isinstance(value, Path):
-        return str(value)
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    return str(value)
+from .serialization import to_json_value
 
 
 def _print_json(value: Any) -> None:
-    print(json.dumps(_json_value(value), indent=2, sort_keys=True))
+    print(
+        json.dumps(
+            to_json_value(value),
+            indent=2,
+            sort_keys=True,
+            allow_nan=False,
+        )
+    )
 
 
 def _contract_summary() -> dict[str, Any]:

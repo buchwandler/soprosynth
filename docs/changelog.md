@@ -5,6 +5,7 @@
 ### Added
 
 - Added an ONNXVoice synthesis runtime with typed requests, prepared voices, WAV output, discovery, and CLI
+- Added a public JSON-safe serialization contract for immutable SoproSynth API values. `DiscoveredBundle` and nested read-only metadata can now be converted without `dataclasses.asdict()` or pickle/deepcopy semantics while preserving immutable in-memory contracts.
 - Added opt-in voice calibration, a reviewable builder, and reference resampling controls
 - Added Sopro-compatible text segmentation and native or raw output conditioning with fades, limiting, and output metadata
 - Added synchronous streaming, optional prewarm, incremental conditioning, chunk metadata, and long-text semantic carry
