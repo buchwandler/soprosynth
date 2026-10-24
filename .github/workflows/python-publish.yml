@@ -67,11 +67,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Check PyPI project name for first publication
-        if: vars.PYPI_PROJECT_CLAIMED != 'true'
-        run: python scripts/check_pypi_name.py --package soprosynth --mode first
-      - name: Defer subsequent ownership checks to PyPI Trusted Publishing
-        if: vars.PYPI_PROJECT_CLAIMED == 'true'
+      - name: Verify PyPI project ownership through Trusted Publishing
         run: python scripts/check_pypi_name.py --package soprosynth --mode subsequent
       - name: Publish with PyPI Trusted Publishing
         uses: pypa/gh-action-pypi-publish@release/v1
