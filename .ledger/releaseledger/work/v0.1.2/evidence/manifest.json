@@ -1,0 +1,42 @@
+{
+  "candidate_count": 2,
+  "candidates": [
+    {
+      "additions": 218,
+      "deletions": 19,
+      "patch_file": "cbef027.patch",
+      "patch_sha256": "e57453e1a9da3fad545ffad9b78439ed599a0b15b15bb262e3f13edf68d85e74",
+      "paths": [
+        "README.md",
+        "docs/changelog.md",
+        "soprosynth/__init__.py",
+        "soprosynth/__main__.py",
+        "soprosynth/serialization.py",
+        "tests/test_cli.py",
+        "tests/test_serialization.py",
+        "tests/wheel_api_smoke.py"
+      ],
+      "sha": "cbef0275d8b6e473465dcdd5b171f4bc81665db8",
+      "short_sha": "cbef027",
+      "source_ref": "git:cbef0275d8b6e473465dcdd5b171f4bc81665db8"
+    },
+    {
+      "additions": 1,
+      "deletions": 1,
+      "patch_file": "1d5bca5.patch",
+      "patch_sha256": "ffacd5b7a9644386677cbe8f4d8be7de6b98a1a7053d557ab694395d85f363c4",
+      "paths": ["soprosynth/serialization.py"],
+      "sha": "1d5bca5b67730f0502f4493c466f7af08955b3c0",
+      "short_sha": "1d5bca5",
+      "source_ref": "git:1d5bca5b67730f0502f4493c466f7af08955b3c0"
+    }
+  ],
+  "git_base_ref": "d8225a64000dad4bf6e1bc2fa086a1166f9b8cdb",
+  "git_base_sha": "d8225a64000dad4bf6e1bc2fa086a1166f9b8cdb",
+  "git_head_ref": "1d5bca5b67730f0502f4493c466f7af08955b3c0",
+  "git_head_sha": "1d5bca5b67730f0502f4493c466f7af08955b3c0",
+  "include_merges": "nontrivial",
+  "object_type": "git_evidence_manifest",
+  "release_version": "v0.1.2",
+  "schema_version": 1
+}

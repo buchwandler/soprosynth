@@ -1,0 +1,44 @@
+schema: releaseledger.entry-batch.v1
+operation: create
+schema_version: 1
+object_type: release_entry_batch
+release_version: v0.1.2
+git_base_ref: d8225a64000dad4bf6e1bc2fa086a1166f9b8cdb
+git_base_sha: d8225a64000dad4bf6e1bc2fa086a1166f9b8cdb
+git_head_ref: 1d5bca5b67730f0502f4493c466f7af08955b3c0
+git_head_sha: 1d5bca5b67730f0502f4493c466f7af08955b3c0
+include_merges: nontrivial
+entries:
+  - kind: added
+    summary: Added public JSON-safe serialization helpers for immutable SoproSynth API values
+    status: accepted
+    source_refs:
+      - git:cbef0275d8b6e473465dcdd5b171f4bc81665db8
+    paths:
+      - README.md
+      - docs/changelog.md
+      - soprosynth/__init__.py
+      - soprosynth/__main__.py
+      - soprosynth/serialization.py
+      - tests/test_cli.py
+      - tests/test_serialization.py
+      - tests/wheel_api_smoke.py
+    sources:
+      - git:cbef0275d8b6e473465dcdd5b171f4bc81665db8
+    prs: []
+    issues: []
+    contributors:
+      - "@holgern"
+  - kind: fixed
+    summary: Fixed serialized Path values to use POSIX separators for stable cross-platform JSON output
+    status: accepted
+    source_refs:
+      - git:1d5bca5b67730f0502f4493c466f7af08955b3c0
+    paths:
+      - soprosynth/serialization.py
+    sources:
+      - git:1d5bca5b67730f0502f4493c466f7af08955b3c0
+    prs: []
+    issues: []
+    contributors:
+      - "@holgern"

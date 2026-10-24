@@ -1,0 +1,13 @@
+rows:
+  - sha: d8225a64000dad4bf6e1bc2fa086a1166f9b8cdb
+    inspected: true
+    inspected_paths:
+      - .github/workflows/python-publish.yml
+    observed_behavior: >-
+      Configured the Python publishing workflow to authenticate PyPI uploads with the repository's PYPI_API_TOKEN secret.
+    public_impact: internal
+    decision: internal
+    target_entry_key: null
+    target_entry_id: null
+    notes: ""
+    stale: false

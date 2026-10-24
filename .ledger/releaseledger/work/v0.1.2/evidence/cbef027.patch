@@ -1,0 +1,361 @@
+ README.md                   |  14 ++++++
+ docs/changelog.md           |   1 +
+ soprosynth/__init__.py      |   3 ++
+ soprosynth/__main__.py      |  27 ++++-------
+ soprosynth/serialization.py |  53 +++++++++++++++++++++
+ tests/test_cli.py           |  14 +++++-
+ tests/test_serialization.py | 112 ++++++++++++++++++++++++++++++++++++++++++++
+ tests/wheel_api_smoke.py    |  13 +++++
+ 8 files changed, 218 insertions(+), 19 deletions(-)
+
+diff --git a/README.md b/README.md
+index 7435a9a..5c2fdda 100644
+--- a/README.md
++++ b/README.md
+@@ -150,6 +150,20 @@ Only the portable `wasm-uint8` profile is currently accepted by the Python runti
+
+ `discover_bundles()` queries ONNXVoice's `sopro` catalog and does not open a synthesis model. Catalog access requires ONNXVoice, provided by the `cpu` extra. `runtime_identity()` returns SoproSynth/ONNXVoice version information and exact catalog/bundle revisions where available; missing revisions remain unknown rather than being guessed.
+
++## Immutable objects and JSON
++
++Public discovery metadata is intentionally immutable, including nested mappings. Avoid using `dataclasses.asdict()` as a generic transport serializer: immutable mappings such as `MappingProxyType` are not compatible with its deep-copy behavior. Use SoproSynth's supported conversion helpers instead:
++
++```python
++import json
++from soprosynth import discover_bundles, to_json_value
++
++payload = to_json_value(discover_bundles(offline=True))
++print(json.dumps(payload, indent=2, allow_nan=False))
++```
++
++For one discovery result, `discovered_bundle_to_dict(bundle)` returns the same detached JSON-compatible field representation. Mappings become ordinary dictionaries, tuples become lists, and `Path` values become strings. Unsupported values and non-finite floats raise errors rather than being silently stringified.
++
+ ## Examples
+
+ Runnable scripts and their prerequisites are documented in [`examples/README.md`](examples/README.md):
+diff --git a/docs/changelog.md b/docs/changelog.md
+index 8a3f012..604d55e 100644
+--- a/docs/changelog.md
++++ b/docs/changelog.md
+@@ -5,6 +5,7 @@
+ ### Added
+
+ - Added an ONNXVoice synthesis runtime with typed requests, prepared voices, WAV output, discovery, and CLI
++- Added a public JSON-safe serialization contract for immutable SoproSynth API values. `DiscoveredBundle` and nested read-only metadata can now be converted without `dataclasses.asdict()` or pickle/deepcopy semantics while preserving immutable in-memory contracts.
+ - Added opt-in voice calibration, a reviewable builder, and reference resampling controls
+ - Added Sopro-compatible text segmentation and native or raw output conditioning with fades, limiting, and output metadata
+ - Added synchronous streaming, optional prewarm, incremental conditioning, chunk metadata, and long-text semantic carry
+diff --git a/soprosynth/__init__.py b/soprosynth/__init__.py
+index b18114e..1fb2f12 100644
+--- a/soprosynth/__init__.py
++++ b/soprosynth/__init__.py
+@@ -44,6 +44,7 @@ from .errors import (
+     UnsupportedBundleError,
+     UnsupportedFeatureError,
+ )
++from .serialization import discovered_bundle_to_dict, to_json_value
+ from .types import (
+     DiscoveredBundle,
+     PreparedVoice,
+@@ -98,6 +99,8 @@ __all__ = [
+     "WordTiming",
+     "__version__",
+     "discover_bundles",
++    "discovered_bundle_to_dict",
+     "request_api_contract",
+     "runtime_identity",
++    "to_json_value",
+ ]
+diff --git a/soprosynth/__main__.py b/soprosynth/__main__.py
+index cb16de1..5153ebf 100644
+--- a/soprosynth/__main__.py
++++ b/soprosynth/__main__.py
+@@ -4,32 +4,25 @@ from __future__ import annotations
+
+ import argparse
+ import json
+-from collections.abc import Mapping, Sequence
+-from dataclasses import fields, is_dataclass
++from collections.abc import Sequence
+ from pathlib import Path
+ from typing import Any
+
+ from . import __version__, discover_bundles, request_api_contract, runtime_identity
+ from .api import SoproRuntime
+ from .config import GenerationConfig, SoproOutputConfig, VoiceLevelConfig
+-
+-
+-def _json_value(value: Any) -> Any:
+-    if is_dataclass(value) and not isinstance(value, type):
+-        return {field.name: _json_value(getattr(value, field.name)) for field in fields(value)}
+-    if isinstance(value, Mapping):
+-        return {str(key): _json_value(item) for key, item in value.items()}
+-    if isinstance(value, (tuple, list)):
+-        return [_json_value(item) for item in value]
+-    if isinstance(value, Path):
+-        return str(value)
+-    if value is None or isinstance(value, (str, int, float, bool)):
+-        return value
+-    return str(value)
++from .serialization import to_json_value
+
+
+ def _print_json(value: Any) -> None:
+-    print(json.dumps(_json_value(value), indent=2, sort_keys=True))
++    print(
++        json.dumps(
++            to_json_value(value),
++            indent=2,
++            sort_keys=True,
++            allow_nan=False,
++        )
++    )
+
+
+ def _contract_summary() -> dict[str, Any]:
+diff --git a/soprosynth/serialization.py b/soprosynth/serialization.py
+new file mode 100644
+index 0000000..0a57c4d
+--- /dev/null
++++ b/soprosynth/serialization.py
+@@ -0,0 +1,53 @@
++"""JSON-safe transport conversion for public SoproSynth values."""
++
++from __future__ import annotations
++
++import math
++from collections.abc import Mapping
++from dataclasses import fields, is_dataclass
++from pathlib import Path
++from typing import Any, TypeAlias
++
++from .types import DiscoveredBundle
++
++JsonScalar: TypeAlias = None | bool | int | float | str
++JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
++
++
++def to_json_value(value: Any) -> JsonValue:
++    """Return a detached JSON-compatible representation of ``value``.
++
++    Dataclasses are traversed field-by-field (never via ``dataclasses.asdict``),
++    and arbitrary mappings such as ``MappingProxyType`` are copied to dicts.
++    Unsupported values and non-string mapping keys are rejected instead of
++    being silently coerced.
++    """
++    if is_dataclass(value) and not isinstance(value, type):
++        return {item.name: to_json_value(getattr(value, item.name)) for item in fields(value)}
++    if isinstance(value, Mapping):
++        result: dict[str, JsonValue] = {}
++        for key, item in value.items():
++            if not isinstance(key, str):
++                raise TypeError(f"JSON object keys must be strings, got {type(key).__name__}")
++            result[key] = to_json_value(item)
++        return result
++    if isinstance(value, (tuple, list)):
++        return [to_json_value(item) for item in value]
++    if isinstance(value, Path):
++        return str(value)
++    if value is None or isinstance(value, (str, bool, int)):
++        return value
++    if isinstance(value, float):
++        if not math.isfinite(value):
++            raise ValueError("JSON values must not contain non-finite floats")
++        return value
++    raise TypeError(f"value of type {type(value).__name__} is not JSON-compatible")
++
++
++def discovered_bundle_to_dict(bundle: DiscoveredBundle) -> dict[str, JsonValue]:
++    """Convert one ``DiscoveredBundle`` to detached JSON-compatible fields."""
++    if not isinstance(bundle, DiscoveredBundle):
++        raise TypeError(f"bundle must be a DiscoveredBundle, got {type(bundle).__name__}")
++    payload = to_json_value(bundle)
++    assert isinstance(payload, dict)
++    return payload
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index 493128a..d4655e2 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -29,14 +29,24 @@ def test_discover_prints_onnxvoice_catalog_without_backend_selector(monkeypatch,
+         id="v2-turbo",
+         ref="sopro:v2-turbo",
+         display_name="Sopro v2 Turbo",
+-        metadata={"backend": "onnx"},
++        metadata={
++            "catalog": {
++                "profile": {
++                    "providers": ("CPUExecutionProvider",),
++                }
++            }
++        },
+     )
+     monkeypatch.setattr(cli, "discover_bundles", lambda **kwargs: calls.append(kwargs) or (bundle,))
+
+     assert cli.main(["discover", "--offline", "--refresh"]) == 0
+     payload = json.loads(capsys.readouterr().out)
+     assert calls == [{"offline": True, "refresh": True, "cache_dir": None}]
+-    assert payload[0]["metadata"]["backend"] == "onnx"
++    assert "catalog" in payload[0]["metadata"]
++    profile = payload[0]["metadata"]["catalog"]["profile"]
++    assert profile["providers"] == ["CPUExecutionProvider"]
++    assert isinstance(payload[0]["metadata"], dict)
++    assert isinstance(profile["providers"], list)
+     assert "backend" not in vars(cli._build_parser().parse_args(["discover"]))
+
+
+diff --git a/tests/test_serialization.py b/tests/test_serialization.py
+new file mode 100644
+index 0000000..b8375ae
+--- /dev/null
++++ b/tests/test_serialization.py
+@@ -0,0 +1,112 @@
++"""Tests for the public immutable-object JSON transport contract."""
++
++from __future__ import annotations
++
++import json
++import math
++from collections import UserDict
++from pathlib import Path
++
++import pytest
++
++from soprosynth import DiscoveredBundle, discovered_bundle_to_dict, to_json_value
++
++
++def _bundle() -> DiscoveredBundle:
++    return DiscoveredBundle(
++        id="model-v1",
++        ref="sopro:model-v1",
++        display_name="Model v1",
++        languages=("en", "de"),
++        metadata={
++            "catalog": {
++                "profile": {
++                    "precision": "uint8",
++                    "providers": ("CPUExecutionProvider",),
++                }
++            }
++        },
++    )
++
++
++def test_discovered_bundle_to_dict_serializes_nested_read_only_metadata() -> None:
++    bundle = _bundle()
++
++    assert type(bundle.metadata).__name__ == "mappingproxy"
++    assert type(bundle.metadata["catalog"]).__name__ == "mappingproxy"
++    assert type(bundle.metadata["catalog"]["profile"]).__name__ == "mappingproxy"
++
++    payload = discovered_bundle_to_dict(bundle)
++    json.dumps(payload, allow_nan=False)
++
++    assert payload == {
++        "id": "model-v1",
++        "ref": "sopro:model-v1",
++        "display_name": "Model v1",
++        "aliases": [],
++        "languages": ["en", "de"],
++        "sample_rate": None,
++        "profiles": [],
++        "source_revision": None,
++        "source_commit": None,
++        "metadata": {
++            "catalog": {
++                "profile": {
++                    "precision": "uint8",
++                    "providers": ["CPUExecutionProvider"],
++                }
++            }
++        },
++    }
++
++
++def test_serialized_values_are_detached_and_mutable() -> None:
++    bundle = _bundle()
++    payload = discovered_bundle_to_dict(bundle)
++
++    payload["metadata"]["catalog"]["profile"]["precision"] = "fp16"
++    payload["metadata"]["catalog"]["profile"]["providers"].append("OtherProvider")
++    payload["languages"].append("fr")
++
++    assert bundle.metadata["catalog"]["profile"]["precision"] == "uint8"
++    assert bundle.metadata["catalog"]["profile"]["providers"] == ("CPUExecutionProvider",)
++    assert bundle.languages == ("en", "de")
++
++
++def test_to_json_value_accepts_arbitrary_mappings_and_converts_paths() -> None:
++    payload = to_json_value(
++        UserDict({"nested": UserDict({"path": Path("/tmp/model"), "items": (1, 2)})})
++    )
++
++    assert payload == {"nested": {"path": "/tmp/model", "items": [1, 2]}}
++    assert json.loads(json.dumps(payload, allow_nan=False)) == payload
++
++
++def test_to_json_value_rejects_non_string_mapping_keys() -> None:
++    with pytest.raises(TypeError, match="keys must be strings"):
++        to_json_value({1: "not a JSON object key"})
++
++
++def test_discovered_bundle_helper_validates_input_type() -> None:
++    with pytest.raises(TypeError, match="must be a DiscoveredBundle"):
++        discovered_bundle_to_dict({"id": "not a bundle"})  # type: ignore[arg-type]
++
++
++def test_to_json_value_rejects_unsupported_values_without_stringifying() -> None:
++    class Unsupported:
++        pass
++
++    with pytest.raises(TypeError, match="Unsupported.*not JSON-compatible"):
++        to_json_value(Unsupported())
++
++
++@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
++def test_to_json_value_rejects_non_finite_floats(value: float) -> None:
++    with pytest.raises(ValueError, match="non-finite"):
++        to_json_value(value)
++
++
++def test_to_json_value_preserves_json_scalars() -> None:
++    value = {"none": None, "boolean": False, "integer": 7, "float": 1.25, "string": "ok"}
++
++    assert to_json_value(value) == value
+diff --git a/tests/wheel_api_smoke.py b/tests/wheel_api_smoke.py
+index a87cabe..6fbad5a 100644
+--- a/tests/wheel_api_smoke.py
++++ b/tests/wheel_api_smoke.py
+@@ -2,6 +2,7 @@
+
+ from __future__ import annotations
+
++import json
+ import sys
+ from pathlib import Path
+
+@@ -23,6 +24,8 @@ required = (
+     "SoproRuntime",
+     "discover_bundles",
+     "runtime_identity",
++    "to_json_value",
++    "discovered_bundle_to_dict",
+ )
+ for name in required:
+     assert hasattr(soprosynth, name), name
+@@ -40,6 +43,16 @@ assert capabilities.backend == "onnx"
+ assert capabilities.supports_streaming is False
+ assert capabilities.supports_request_measurement is True
+ assert soprosynth.runtime_identity()["engine_version"]
++bundle = soprosynth.DiscoveredBundle(
++    id="wheel-smoke",
++    ref="sopro:wheel-smoke",
++    display_name="Wheel smoke",
++    metadata={"catalog": {"profile": {"providers": ("CPUExecutionProvider",)}}},
++)
++bundle_payload = soprosynth.discovered_bundle_to_dict(bundle)
++assert bundle_payload["metadata"]["catalog"]["profile"]["providers"] == ["CPUExecutionProvider"]
++assert soprosynth.to_json_value(bundle) == bundle_payload
++json.dumps(bundle_payload, allow_nan=False)
+
+ checkout = Path(__file__).resolve().parents[1]
+ installed_package = Path(soprosynth.__file__).resolve()

@@ -1,0 +1,33 @@
+schema_version: 1
+object_type: commit_audit_sheet
+versioning:
+  schema_version: 1
+  revision: 2
+release_version: 0.1.1
+git_base_ref: v0.1.0
+git_base_sha: 9e4297f7063d4f65d2cfa3c85b7ee2c8f02dba12
+git_head_ref: v0.1.1
+git_head_sha: d8225a64000dad4bf6e1bc2fa086a1166f9b8cdb
+git_range: 9e4297f7063d4f65d2cfa3c85b7ee2c8f02dba12..d8225a64000dad4bf6e1bc2fa086a1166f9b8cdb
+commit_count: 1
+rows:
+  - sha: d8225a64000dad4bf6e1bc2fa086a1166f9b8cdb
+    source_ref: git:d8225a64000dad4bf6e1bc2fa086a1166f9b8cdb
+    short_sha: d8225a6
+    changed_paths:
+      - .github/workflows/python-publish.yml
+    stats:
+      files_changed: 1
+      insertions: 1
+      deletions: 0
+    inspected: true
+    inspected_paths:
+      - .github/workflows/python-publish.yml
+    observed_behavior:
+      Configured the Python publishing workflow to authenticate PyPI
+      uploads with the repository's PYPI_API_TOKEN secret.
+    public_impact: internal
+    decision: internal
+    stale: false
+    evidence_subject: "chore: ci"
+    notes: ""

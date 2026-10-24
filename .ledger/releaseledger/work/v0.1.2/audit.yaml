@@ -1,0 +1,52 @@
+schema_version: 1
+object_type: commit_audit_sheet
+versioning:
+  schema_version: 1
+  revision: 1
+release_version: v0.1.2
+git_base_ref: v0.1.1
+git_base_sha: d8225a64000dad4bf6e1bc2fa086a1166f9b8cdb
+git_head_ref: HEAD
+git_head_sha: 1d5bca5b67730f0502f4493c466f7af08955b3c0
+git_range: d8225a64000dad4bf6e1bc2fa086a1166f9b8cdb..1d5bca5b67730f0502f4493c466f7af08955b3c0
+commit_count: 2
+rows:
+  - sha: cbef0275d8b6e473465dcdd5b171f4bc81665db8
+    source_ref: git:cbef0275d8b6e473465dcdd5b171f4bc81665db8
+    short_sha: cbef027
+    changed_paths:
+      - README.md
+      - docs/changelog.md
+      - soprosynth/__init__.py
+      - soprosynth/__main__.py
+      - soprosynth/serialization.py
+      - tests/test_cli.py
+      - tests/test_serialization.py
+      - tests/wheel_api_smoke.py
+    stats:
+      files_changed: 8
+      insertions: 218
+      deletions: 19
+    inspected: false
+    inspected_paths: []
+    observed_behavior: ""
+    public_impact: unknown
+    decision: needs_review
+    stale: false
+    evidence_subject: "feat: serialization contract added"
+  - sha: 1d5bca5b67730f0502f4493c466f7af08955b3c0
+    source_ref: git:1d5bca5b67730f0502f4493c466f7af08955b3c0
+    short_sha: 1d5bca5
+    changed_paths:
+      - soprosynth/serialization.py
+    stats:
+      files_changed: 1
+      insertions: 1
+      deletions: 1
+    inspected: false
+    inspected_paths: []
+    observed_behavior: ""
+    public_impact: unknown
+    decision: needs_review
+    stale: false
+    evidence_subject: "fix: windows"

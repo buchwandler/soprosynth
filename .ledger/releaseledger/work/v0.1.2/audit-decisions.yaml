@@ -1,0 +1,32 @@
+rows:
+  - sha: cbef0275d8b6e473465dcdd5b171f4bc81665db8
+    inspected: true
+    inspected_paths:
+      - README.md
+      - docs/changelog.md
+      - soprosynth/__init__.py
+      - soprosynth/__main__.py
+      - soprosynth/serialization.py
+      - tests/test_cli.py
+      - tests/test_serialization.py
+      - tests/wheel_api_smoke.py
+    observed_behavior: >-
+      Added public JSON-safe conversion helpers for SoproSynth dataclass and immutable mapping values; CLI discovery output now uses detached JSON-compatible data, and strict validation rejects unsupported values, non-string keys, and non-finite floats.
+    public_impact: public
+    decision: accepted
+    target_entry_key: null
+    target_entry_id: null
+    notes: ""
+    stale: false
+  - sha: 1d5bca5b67730f0502f4493c466f7af08955b3c0
+    inspected: true
+    inspected_paths:
+      - soprosynth/serialization.py
+    observed_behavior: >-
+      Path values are serialized with POSIX separators so JSON output is stable across operating systems.
+    public_impact: public
+    decision: accepted
+    target_entry_key: null
+    target_entry_id: null
+    notes: ""
+    stale: false
