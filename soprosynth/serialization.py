@@ -34,7 +34,7 @@ def to_json_value(value: Any) -> JsonValue:
     if isinstance(value, (tuple, list)):
         return [to_json_value(item) for item in value]
     if isinstance(value, Path):
-        return str(value)
+        return value.as_posix()
     if value is None or isinstance(value, (str, bool, int)):
         return value
     if isinstance(value, float):
